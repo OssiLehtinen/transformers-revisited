@@ -28,7 +28,8 @@
   flattens the whole tower of layers into something closer to a wide bank of parallel workers. Almost.</p>
   <p>The promise is the same as the original's: no prerequisites beyond arithmetic. We'll add each
   concept one at a time, as it's needed, and by the end there will be no mysterious black boxes left —
-  just a few clearly marked doors we chose not to open, with signs saying what's behind them.</p>
+  just a few clearly marked doors — some already open onto pages of their own, the rest bearing
+  signs that say what's behind them.</p>
 
   <nav class="toc" aria-label="Contents">
     <a href="#one-hot"><span class="num">01</span>One-hot encoding</a><br>
@@ -52,7 +53,7 @@
     <a href="#layers"><span class="num">19</span>Layers, revisited</a><br>
     <a href="#decoder-only"><span class="num">20</span>Decoder-only by default</a><br>
     <a href="#tokenizing"><span class="num">21</span>Tokenizing and BPE</a><br>
-    <a href="#off-ramps"><span class="num">22</span>Doors we didn't open</a><br>
+    <a href="#off-ramps"><span class="num">22</span>The doors</a><br>
     <a href="#ledger"><span class="num">23</span>Corrections ledger</a><br>
     <a href="#resources"><span class="num">24</span>Resources and credits</a>
   </nav>
@@ -292,7 +293,7 @@
   <p>Notice also what the loop implies: to generate token 1,001 we apparently re-process tokens 1
   through 1,000 from scratch. We don't, in practice — the keys and values computed for old tokens
   never change, so they're cached and reused. That single observation reshapes the economics of
-  inference, and it gets its own door in section 22.</p>
+  inference, and its door is now open: <a href="doors/kv-cache.html">the KV cache</a>.</p>
 </section>
 
 <section id="embeddings">
@@ -680,15 +681,17 @@
 </section>
 
 <section id="off-ramps">
-  <h2><span class="num">22</span>Doors we didn't open</h2>
+  <h2><span class="num">22</span>The doors</h2>
   <p>The core transformer is now fully assembled, and this essay stops at its edges on purpose.
-  Everything below is real, important, and deliberately left as a marked door — each one a
-  candidate for its own future page. None of them changes the machine you just built; they change
-  how fast it runs, how long its memory is, and what happens to it after pretraining.</p>
+  Everything below is real and important, but none of it changes the machine you just built — it
+  changes how fast the machine runs, how long its memory is, and what happens to it after
+  pretraining. So each topic gets a door. An <strong>open</strong> door leads to its own page,
+  written in the same spirit as this one; a <strong>marked</strong> door carries a sign saying
+  what's behind it, until its page is written too. The corridor grows one door at a time.</p>
 
-  <div class="stub">
-    <span class="tag">door 01 · planned page</span>
-    <h3>The KV cache, and the economics of inference</h3>
+  <div class="stub open">
+    <span class="tag">door 01 · open</span>
+    <h3><a href="doors/kv-cache.html">The KV cache, and the economics of inference</a></h3>
     <p>Generation re-reads the whole past for every new token — unless you cache each token's keys
     and values, which never change. The cache turns generation from quadratic re-work into a fast
     append, and its memory footprint (which GQA exists to shrink) is the central budget of serving
@@ -696,7 +699,7 @@
   </div>
 
   <div class="stub">
-    <span class="tag">door 02 · planned page</span>
+    <span class="tag">door 02 · sign only</span>
     <h3>FlashAttention: the same math, faster</h3>
     <p>Attention's real cost on modern GPUs isn't arithmetic, it's moving the [n × n] score matrix
     in and out of memory. FlashAttention computes the identical result in tiles that never leave
@@ -705,7 +708,7 @@
   </div>
 
   <div class="stub">
-    <span class="tag">door 03 · planned page</span>
+    <span class="tag">door 03 · sign only</span>
     <h3>Long context</h3>
     <p>How does a model trained on 8k tokens read a novel? Mostly by careful manipulation of RoPE's
     rotation frequencies (position interpolation, YaRN, and kin), plus attention variants — sliding
@@ -713,7 +716,7 @@
   </div>
 
   <div class="stub">
-    <span class="tag">door 04 · planned page</span>
+    <span class="tag">door 04 · sign only</span>
     <h3>Mixture of experts</h3>
     <p>Since the MLPs hold most of the parameters, replace each one with a panel of expert MLPs and
     a tiny router that sends each token to a couple of them. Total parameters balloon; compute per
@@ -721,7 +724,7 @@
   </div>
 
   <div class="stub">
-    <span class="tag">door 05 · planned page</span>
+    <span class="tag">door 05 · sign only</span>
     <h3>After pretraining: instruction tuning and RLHF</h3>
     <p>Everything in this essay produces a next-token predictor. The step from "continues text" to
     "answers questions and follows instructions" is post-training — supervised fine-tuning on
@@ -730,7 +733,7 @@
   </div>
 
   <div class="stub">
-    <span class="tag">door 06 · planned page</span>
+    <span class="tag">door 06 · sign only</span>
     <h3>Beyond text, and beyond attention</h3>
     <p>Images, audio, and other modalities enter the same stream as sequences of dense vectors —
     the trick anticipated in the original essay's audio section. Meanwhile state-space models and

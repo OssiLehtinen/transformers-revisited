@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Door 01: The KV Cache — Transformers from Scratch, Revisited</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+
+<header class="site">
+  <p class="eyebrow"><a href="../index.html" style="color:inherit; text-decoration:none;">&larr; transformers from scratch, revisited</a> · door 01</p>
+  <h1>The KV cache, and the<br>economics of inference</h1>
+  <p style="color:var(--ink-dim); font-family:'IBM Plex Mono',monospace; font-size:0.9rem;">
+    the table persists, only the probe is new
+  </p>
+  <p style="margin-top:1.4rem;">This door opens off <a href="../index.html#completion">section 11</a>,
+  where we noticed something alarming about the generation loop: producing token 1,001 apparently
+  means re-processing tokens 1 through 1,000 from scratch. You'll want the attention equation from
+  <a href="../index.html#single-head">section 16</a> in your head — queries as search probes, keys
+  as the table being searched, values as what gets retrieved — and the causal mask, because the
+  entire trick behind this door is a consequence of masking. Nothing new is added to the machine
+  here. We just stop throwing work away, and then follow the consequences all the way to the
+  price list on your favorite model provider's website.</p>
+</header>
+
+<section id="the-bill-for-forgetting">
+  <h2><span class="num">01</span>The loop, honestly costed</h2>
+  <p>The generation loop from section 11: run a forward pass over the sequence, get a distribution
+  for the next token, sample one, append it, repeat. Written that way, each pass processes the
+  <em>whole</em> sequence — and the sequence grows by one every step.</p>
+  <p>Count what that costs. Attention on <em>n</em> tokens builds an [n&nbsp;×&nbsp;n] score table,
+  so a pass over <em>n</em> tokens does on the order of n² work in every attention block — and the
+  projections that make Q, K, V and feed the MLPs do a matmul for <em>every one</em> of the n
+  positions. To generate a 1,000-token reply this way, you'd run a full pass at length 1,001, then
+  1,002, then 1,003&hellip; The position-wise work alone, summed over the loop, grows with the
+  <em>square</em> of the reply length; the attention tables push it toward a cube. All to produce
+  one token per pass, at the last position, while recomputing the other thousand positions to
+  results we could have predicted perfectly — because we already computed them last step.</p>
+  <p>That last clause is the whole door. Why <em>are</em> the old results identical from step to
+  step?</p>
+</section>
+
+<section id="what-never-changes">
+  <h2><span class="num">02</span>What never changes</h2>
+  <p>Because of the causal mask. Position <em>i</em> is forbidden from consulting anything after
+  <em>i</em> — that was the point of adding −∞ above the diagonal in
+  <a href="../index.html#single-head">section 16</a>. So everything the model computes at position
+  <em>i</em>, in every layer, depends only on tokens 1 through <em>i</em>. Appending token
+  <em>n</em>+1 to the sequence changes nothing upstream of it: token 42's residual stream, its
+  keys, its values are bit-for-bit what they were before the new token existed. The past is
+  sealed by construction.</p>
+  <p>Look at what one generation step actually adds to the attention picture:</p>
+  <pre class="fig">        keys →   t1   t2   t3   t4  │ t5
+  queries                            │
+  ↓  t1          ■    −∞   −∞   −∞  │ −∞
+     t2          ■    ■    −∞   −∞  │ −∞        old rows: already
+     t3          ■    ■    ■    −∞  │ −∞        computed last step,
+     t4          ■    ■    ■    ■   │ −∞        unchanged forever
+   ──────────────────────────────────┼─────
+     t5          □    □    □    □   │ □    ← the only new row
+<span class="cap">One step of generation grows the causal score table by one row (t5's search over
+everything) and one column (t5's key, which no earlier query is allowed to see).</span></pre>
+  <p>The new column is all −∞: earlier positions may not look at t5, so their attention rows —
+  and therefore their outputs, and therefore everything downstream — are untouched. The only new
+  work in the entire [n&nbsp;×&nbsp;n] table is the bottom row: <strong>one new query, searched
+  against all the old keys</strong>. And note which letters that row needs. It needs t5's own
+  <em>q</em>, <em>k</em>, and <em>v</em>, freshly computed. From the past it needs only the keys
+  and the values — the table being searched and the content to retrieve. The old <em>queries</em>
+  are never needed again: a probe is used the moment it's made, and discarded. That asymmetry
+  names the cache.</p>
+</section>
+
+<section id="the-cache">
+  <h2><span class="num">03</span>Generation as an append</h2>
+  <p>So: in every layer, keep the keys and values of every token processed so far — two growing
+  lists per attention head, called the <strong>KV cache</strong>. A generation step becomes:</p>
+  <pre class="fig">for each layer:
+    q, k, v  ←  project the ONE new token          (three small matmuls)
+    append k, v to this layer's cache               (the table grows by one entry)
+    scores   ←  q · every key in the cache          (one row of dot products)
+    output   ←  softmax(scores) · cached values     (one weighted blend)
+    &hellip; MLP on the one new token, as usual &hellip;
+<span class="cap">Per step, per layer: project one token, search one probe over the accumulated
+table, retrieve one blend. Nothing is recomputed; the past is read, not re-derived.</span></pre>
+  <p>Every operation is one of our familiar friends — the same dot-product search as always, just
+  performed by a single fresh probe over a table that persists between steps. The forward pass
+  over <em>n</em> tokens has become a forward pass over <em>one</em> token that consults
+  <em>n</em> entries of stored table. Per-step cost drops from "re-run everything" to "project one
+  token and take one row of dot products": linear in the past instead of quadratic, and the summed
+  cost of a whole reply drops by a factor of roughly the reply length. Generating token 1,001 does
+  about a thousandth of the naive work.</p>
+  <p>Two honesty notes. First, the cache is not an approximation — it produces bit-identical
+  outputs to the naive recomputation (floating-point rounding quirks aside). It's pure
+  bookkeeping, the same trick as remembering a running total instead of re-adding the column of
+  figures each time. Second, the cache is <em>only</em> possible because the mask is causal.
+  A bidirectional model like BERT lets every position see every other, so appending a token would
+  genuinely change all the old representations — nothing could be cached. The causal mask looked
+  like a restriction back in section 16; it's also a gift.</p>
+</section>
+
+<section id="the-bill">
+  <h2><span class="num">04</span>The bill arrives in bytes</h2>
+  <p>Nothing is free. We bought speed by <em>storing</em> the past instead of recomputing it, so
+  the cost moved from arithmetic to memory — and it's worth doing the arithmetic on the memory,
+  because the numbers come out shockingly large.</p>
+  <p>Each cached entry is two vectors (a key and a value) per attention head, per layer. Take a
+  respectable open model of the 7B class — 32 layers, 32 heads of 128 dimensions each — storing
+  its cache at 2 bytes per number:</p>
+  <pre class="fig">per token:   2 vectors · 32 layers · 32 heads · 128 dims · 2 bytes
+           = 524,288 bytes                          ≈ ½ MB per token
+
+per sequence at a 4,096-token context:              ≈ 2 GB
+serving 16 users at once:                           ≈ 32 GB
+
+&hellip; which no longer fits beside the model's own 14 GB of weights
+on a 40 GB GPU.
+<span class="cap">The KV cache ledger. Half a megabyte per token sounds like nothing; multiplied
+by context length and batch size it out-eats the model itself.</span></pre>
+  <p>This is the central budget of serving language models. The weights are a fixed cost, paid
+  once per GPU; the cache grows with every token of every concurrent conversation. Long contexts
+  and big batches — the two things everybody wants — are both purchases of exactly this currency.
+  When a provider limits your context window, or when a local model slows to a crawl as the chat
+  grows, you are usually watching this table strain against a memory ceiling.</p>
+</section>
+
+<section id="shrinking-the-table">
+  <h2><span class="num">05</span>Shrinking the table: MQA, GQA, and kin</h2>
+  <p>The pressure of that ledger has reshaped the architecture itself. Look at where the bytes
+  went: 32 heads each keeping a private K and V table. But recall from
+  <a href="../index.html#multihead">section 15</a> what the heads are for — running searches in
+  parallel from different perspectives. The <em>searches</em> need to differ; must each search
+  also keep its own private copy of the library?</p>
+  <p><strong>Multi-query attention</strong> (MQA) answers with a hard no: keep 32 distinct query
+  heads but share one single K and V table among them all — a 32× smaller cache, at some cost in
+  quality, since every probe now searches the same index of the past.
+  <strong>Grouped-query attention</strong> (GQA) is the compromise that stuck: small groups of
+  query heads share a KV table. Eight KV heads serving 32 query heads is a typical arrangement —
+  a 4× smaller cache, nearly indistinguishable quality — and some form of it is in
+  essentially every model trained since the mid-2020s. When the main essay's
+  <a href="../index.html#off-ramps">door sign</a> said the cache's footprint is "what GQA exists
+  to shrink," this is the shrinking.</p>
+  <p>The squeezing continues past head-sharing, and one honesty note covers the lot: sliding-window
+  attention caps how far back some layers may look, so their cache stops growing at the window
+  size; quantizing the cache to fewer bytes per number is routine; and the latent-attention family
+  (DeepSeek's MLA and kin) stores a compressed summary from which keys and values are
+  reconstructed on the fly, trading a little arithmetic — the cheap currency — for a lot of
+  memory, the expensive one. Different mechanisms, one motive: everyone is paying rent on the
+  same table.</p>
+</section>
+
+<section id="two-phases">
+  <h2><span class="num">06</span>The two phases, and the price list</h2>
+  <p>The cache also splits inference into two visibly different phases, and the split explains
+  some things you have personally experienced.</p>
+  <p><strong>Prefill:</strong> the prompt arrives all at once, so the model processes it the way
+  it was trained — every position in parallel, one big pass, the full triangular score table, all
+  of it riding the bullet train of engineering reality #1 from
+  <a href="../index.html#rest-stop">section 08</a>. Prefill's job is to fill the cache and produce
+  the first new token. It is <em>compute</em>-bound: the GPU's multipliers are the bottleneck,
+  and they are legion.</p>
+  <p><strong>Decode:</strong> then the loop begins, one token at a time, each step a single probe
+  against the whole cache. The arithmetic per step is tiny; the problem is that the step must
+  <em>read the entire cache from memory</em> — gigabytes of table — to do a few million
+  multiplications. Decode is <em>memory-bandwidth</em>-bound: the multipliers idle while bytes
+  crawl in from VRAM. It's also irreducibly serial — token 1,002 cannot start until token 1,001
+  is chosen.</p>
+  <p>Now read a model provider's price list: input tokens several times cheaper than output
+  tokens. That ratio is this door. Input tokens are prefill — parallel, efficient, amortized;
+  output tokens are decode — serial steps, each dragging the full cache past the compute units,
+  each occupying scarce cache memory for the duration. The same split shows up in the feel of a
+  chat: the pause before the first word is prefill, the steady drip thereafter is decode. Two
+  different machines, in effect, running the same weights.</p>
+  <p>And that is the economics of inference in one sentence: <strong>generation is a search over
+  a table you must keep, and you pay for arithmetic during prefill but for memory ever
+  after.</strong> The door out of this room leads to FlashAttention — the story of how even the
+  <em>prefill</em> score table stopped being written to memory at all — and it's the next one
+  down the corridor in <a href="../index.html#off-ramps">section 22</a>.</p>
+</section>
+
+<footer>
+  <p><a href="../index.html">&larr; back to the core essay</a> · CC0 · contributions are additive</p>
+</footer>
+
+</main>
+</body>
+</html>

@@ -203,6 +203,15 @@
     color: var(--amber);
     opacity: 0.75;
   }
+  /* An opened door: solid phosphor frame instead of dashed amber. */
+  .stub.open {
+    border: 1px solid color-mix(in srgb, var(--phosphor) 45%, transparent);
+    background: rgba(89, 227, 137, 0.05);
+  }
+  .stub.open h3, .stub.open .tag { color: var(--phosphor); }
+  .stub h3 a { color: inherit; text-decoration: none; }
+  .stub h3 a:hover { text-decoration: underline; text-underline-offset: 3px; }
+  .stub h3 a::after { content: " →"; color: var(--phosphor-dim); }
   .note {
     border-left: 3px solid var(--phosphor-dim);
     padding: 0.15rem 0 0.15rem 1rem;
