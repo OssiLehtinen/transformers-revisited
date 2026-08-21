@@ -176,9 +176,10 @@ by context length and batch size it out-eats the model itself.</span></pre>
   different machines, in effect, running the same weights.</p>
   <p>And that is the economics of inference in one sentence: <strong>generation is a search over
   a table you must keep, and you pay for arithmetic during prefill but for memory ever
-  after.</strong> The door out of this room leads to FlashAttention — the story of how even the
-  <em>prefill</em> score table stopped being written to memory at all — and it's the next one
-  down the corridor in <a href="../index.html#off-ramps">section 22</a>.</p>
+  after.</strong> The door out of this room leads to
+  <a href="flash-attention.html">FlashAttention</a> — the story of how even the <em>prefill</em>
+  score table stopped being written to memory at all — the next one down the corridor, and now
+  open.</p>
 </section>
 
 <footer>

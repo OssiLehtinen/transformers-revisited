@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Door 02: FlashAttention — Transformers from Scratch, Revisited</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+
+<header class="site">
+  <p class="eyebrow"><a href="../index.html" style="color:inherit; text-decoration:none;">&larr; transformers from scratch, revisited</a> · door 02</p>
+  <h1>FlashAttention:<br>the same math, faster</h1>
+  <p style="color:var(--ink-dim); font-family:'IBM Plex Mono',monospace; font-size:0.9rem;">
+    never write down the thing you're about to throw away
+  </p>
+  <p style="margin-top:1.4rem;">This door opens off <a href="../index.html#single-head">section
+  16</a>, where the full [n&nbsp;×&nbsp;n] attention table appeared, and it leans hard on
+  engineering reality #1 from <a href="../index.html#rest-stop">section 08</a> — computers are
+  shockingly good at matrix multiplication. Behind this door we discover the fine print on that
+  sentence: they are shockingly good at the <em>multiplying</em>, and comparatively terrible at
+  fetching the numbers to multiply. FlashAttention is not a new kind of attention. It computes
+  exactly the equation you already own, to the last bit of intent, and gets its speed purely by
+  refusing to write a large intermediate result into slow memory. It's the sibling of
+  <a href="kv-cache.html">door 01</a>: another story about arithmetic being cheap and bytes being
+  expensive, this time during training and prefill rather than decode.</p>
+</header>
+
+<section id="where-time-goes">
+  <h2><span class="num">01</span>Where the time actually goes</h2>
+  <p>A modern GPU is two machines in an awkward marriage. One is an arithmetic engine that can
+  perform hundreds of trillions of multiply-adds per second. The other is a memory system —
+  called <strong>HBM</strong>, high-bandwidth memory, the gigabytes quoted on the spec sheet —
+  that, despite the flattering name, can only deliver a few trillion bytes per second. Divide the
+  two numbers: to keep the arithmetic engine busy, every byte fetched from memory must be used in
+  <em>dozens to hundreds</em> of operations. An operation that does lots of math per byte
+  (a big matrix multiplication, conveniently) runs at full speed and is
+  <strong>compute-bound</strong>. An operation that does one or two operations per byte — reading
+  a huge array just to exponentiate it, say — leaves the multipliers idle, waiting on deliveries.
+  It is <strong>memory-bound</strong>, and the spec-sheet teraflops are a fantasy for it.</p>
+  <p>There is also a third character: a few dozen megabytes of <strong>on-chip memory</strong>
+  (SRAM), sitting right beside the arithmetic units, an order of magnitude faster than HBM — and
+  tiny. Everything in this door is about choreographing work so that the bulky intermediate
+  results live and die in that small fast room, and the slow big room is visited as rarely as
+  possible.</p>
+</section>
+
+<section id="naive-kitchen">
+  <h2><span class="num">02</span>Attention, as naively served</h2>
+  <p>Write the attention equation the way a straightforward implementation executes it, and count
+  the trips to slow memory. For a 4,096-token sequence, the score table has
+  4,096&nbsp;×&nbsp;4,096 ≈ 16.8 million entries — <em>per head, per layer</em> — which is far
+  too big for the small fast room, so each intermediate goes out to HBM:</p>
+  <pre class="fig">S = QKᵀ/√d      big matmul       → write 16.8M scores out to HBM
+P = softmax(S)   read them back, exponentiate, normalize
+                                  → write 16.8M weights out to HBM
+out = PV         read them back  → one row of blends, at last
+<span class="cap">Three round trips of an [n × n] object through slow memory, to produce an
+[n × d] result. The matmuls fly; the score table commutes.</span></pre>
+  <p>The matmuls at either end are compute-bound and genuinely fast. The middle is the problem:
+  softmax does a handful of operations per entry, so those two round trips run at memory speed.
+  Worse, the traffic grows with n² while the useful output grows with n — quadruple the context
+  and the wasted commuting grows sixteen-fold. And the object we're shipping back and forth is
+  pure scaffolding: nobody wants the score table itself, only the little [n&nbsp;×&nbsp;d] blend
+  it produces. We are paying premium freight to warehouse something we're about to discard.</p>
+  <p>The obvious fix: compute the table in small tiles that fit in the fast room, use each tile
+  immediately, and never ship it out at all. One obstacle stands in the way, and it's the
+  softmax.</p>
+</section>
+
+<section id="softmax-obstacle">
+  <h2><span class="num">03</span>The obstacle: softmax is a whole-row affair</h2>
+  <p>Recall from <a href="../index.html#unembedding">section 14</a> how softmax is actually
+  computed. For numerical safety you first subtract the row's maximum (so the exponentials can't
+  overflow), then exponentiate, then divide by the sum:</p>
+  <div class="eq">softmax(x)<sub>i</sub> = e<sup>x<sub>i</sub> − m</sup> / ℓ ,
+  &nbsp;&nbsp; m = max(x), &nbsp; ℓ = Σ<sub>j</sub> e<sup>x<sub>j</sub> − m</sup></div>
+  <p>Both m and ℓ are properties of the <em>entire row</em> — every score of one query's search
+  over every key. Process the row in tiles and you seem stuck: the first tile can't be
+  exponentiated correctly because a later tile might contain a bigger maximum, and nothing can be
+  divided by ℓ until the whole row has been seen. It looks like softmax simply demands the full
+  row be materialized somewhere. This is exactly the kind of obstacle that deserves suspicion —
+  it has the same shape as "generation must re-read the whole past" from
+  <a href="kv-cache.html">door 01</a>, and it falls to the same weapon: keep a little running
+  bookkeeping, and correct as you go.</p>
+</section>
+
+<section id="online-softmax">
+  <h2><span class="num">04</span>Online softmax: bookkeeping to the rescue</h2>
+  <p>Walk the row one tile at a time, carrying three running quantities: the biggest score seen so
+  far (m), the sum of exponentials so far (ℓ), and — we'll need it in a moment — the
+  weighted blend of values so far. When a new tile arrives containing a new maximum, every
+  exponential already banked was computed against the old, too-small m. But look at what the error
+  is: each banked term is e<sup>x−m<sub>old</sub></sup> when it should be
+  e<sup>x−m<sub>new</sub></sup>, so every term is off by the <em>same</em> factor,
+  e<sup>m<sub>old</sub>−m<sub>new</sub></sup>. One multiplication rescales the entire past.
+  Watch it work on a row revealed two scores at a time:</p>
+  <pre class="fig">the row, in tiles:      [ 2   1 ] [ 3   0 ]
+
+tile 1:   m = 2,  ℓ = e⁰ + e⁻¹                    = 1.368
+tile 2:   new max 3 — the banked ℓ is stale by e^(2−3)
+          ℓ = 1.368·e⁻¹ + (e⁰ + e⁻³)  = 0.503 + 1.050  = 1.553
+
+answer key (whole row at once, m = 3):
+          ℓ = e⁻¹ + e⁻² + e⁰ + e⁻³                 = 1.553  ✓
+<span class="cap">The running sum, corrected on the fly. No tile ever needed to see another
+tile; the same rescaling fixes the running blend of values.</span></pre>
+  <p>The value blend obeys the same rule: it's a sum of e<sup>x−m</sup>-weighted value vectors,
+  so a change of m rescales the accumulated blend by the identical factor, and the final division
+  by ℓ happens once, at the end of the row. This trick — <strong>online softmax</strong> —
+  computes exactly the textbook softmax, not an approximation of it, while touching each score
+  exactly once. Like the KV cache, it's pure bookkeeping: the running-total trick, again, wearing
+  a numerically-stable coat.</p>
+</section>
+
+<section id="tiling">
+  <h2><span class="num">05</span>The tiled dance</h2>
+  <p>Now the whole algorithm assembles itself. Load a block of queries into the fast room. Stream
+  blocks of keys and values through it. For each incoming block: compute the score tile
+  (a small matmul, compute-bound, happy), fold it into the running m, ℓ, and blend by online
+  softmax, and let the tile evaporate — it never existed outside the fast room. When the last
+  block has streamed past, divide by ℓ and write the finished [block&nbsp;×&nbsp;d] output to
+  slow memory, once.</p>
+  <pre class="fig">          K,V blocks →  ▓▓ → ▓▓ → ▓▓ → ▓▓
+                         │
+  Q block, resident  ┌───▼──────────────────┐
+  in the fast room → │ score tile · m, ℓ,   │ → output written
+                     │ running blend        │   to HBM once
+                     └──────────────────────┘
+        the [n × n] table, never materialized
+<span class="cap">Each score tile is born, used, and discarded on-chip. Slow memory sees only
+Q, K, V on the way in and the finished output on the way out.</span></pre>
+  <p>Slow-memory traffic drops from "three round trips of n²" to "read the inputs, write the
+  answer" — the scaffolding is gone from the freight bill. In practice that's a wall-clock
+  speedup of roughly two to four times on real workloads, and — often more important — the
+  <em>memory</em> needed for attention drops from quadratic in sequence length to linear, since
+  the table is never stored. Training on long sequences went from "cannot fit" to "fine" the day
+  this shipped, which is much of why it's simply the default in every serious framework now.
+  Later versions (FlashAttention-2 and -3) reorganize the same dance for better parallelism on
+  newer hardware; the choreography improves, the math never changes.</p>
+</section>
+
+<section id="exactness">
+  <h2><span class="num">06</span>What it is, and isn't</h2>
+  <p>One loose end: training. Backpropagation — engineering reality #2 — needs the attention
+  weights to compute gradients, and we conspicuously refused to keep them. The fix is a
+  deliberate trade in the now-familiar currency exchange: save only each row's tiny softmax
+  statistics (m and ℓ), and during the backward pass <em>recompute</em> the score tiles on-chip
+  from Q and K. More arithmetic — the cheap thing — in exchange for never storing n² values, the
+  expensive thing. Sound familiar? It's the same exchange rate quoted behind door 01, and paying
+  arithmetic to avoid bytes is the closest thing this corridor has to a running theme.</p>
+  <p>The honesty notes, which for this door are really its moral. First: FlashAttention is
+  <strong>exact</strong>. It is not sparse attention, not an approximation, not a new
+  architecture — every honesty note from section 16 still applies because it <em>is</em> section
+  16, rescheduled. Second: the quadratic <em>arithmetic</em> is all still there; only the
+  quadratic memory traffic is gone. The n² wall was pushed back, not torn down, and the tricks
+  that genuinely soften the quadratic — sliding windows, and the RoPE surgery that stretches
+  context — live behind the next door down the corridor, still
+  <a href="../index.html#off-ramps">marked with a sign</a>. Third, and most general: "efficient"
+  is not a property of an algorithm. It's a property of an algorithm <em>on a machine</em>. The
+  math of attention didn't change in 2022; somebody finally read the machine's freight tariff
+  closely. It's engineering reality #1 with its second clause restored: computers are shockingly
+  good at matrix multiplication — <em>provided you keep the matrices where the multipliers can
+  reach them</em>.</p>
+</section>
+
+<footer>
+  <p><a href="../index.html">&larr; back to the core essay</a> · CC0 · contributions are additive</p>
+</footer>
+
+</main>
+</body>
+</html>

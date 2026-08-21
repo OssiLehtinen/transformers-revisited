@@ -467,8 +467,10 @@
   values at the positions its search matched. Retrieval, completed. Note also that the whole [n × n]
   table is computed at once — every position runs its search in the same pair of matmuls, which is
   precisely the parallelism that made transformers trainable at scale where recurrent models were
-  stuck marching token by token. Attention is quadratic in sequence length, though; that cost, and
-  the ingenious ways of paying it, is another marked door in section 22.</p>
+  stuck marching token by token. Attention is quadratic in sequence length, though. One ingenious
+  way of paying that bill — computing the same table without ever writing it down — has an open
+  door: <a href="doors/flash-attention.html">FlashAttention</a>. Ways of softening the quadratic
+  itself are signposted in section 22.</p>
   <p>Two final honesty notes, both preserved from the original. First: the searches are conducted
   in learned subspaces, so attention relates <em>kinds</em> of content, not individual words — the
   semantic fuzziness from section 12 applies to every probe. Second: what attention passes along is
@@ -698,9 +700,9 @@
     LLMs.</p>
   </div>
 
-  <div class="stub">
-    <span class="tag">door 02 · sign only</span>
-    <h3>FlashAttention: the same math, faster</h3>
+  <div class="stub open">
+    <span class="tag">door 02 · open</span>
+    <h3><a href="doors/flash-attention.html">FlashAttention: the same math, faster</a></h3>
     <p>Attention's real cost on modern GPUs isn't arithmetic, it's moving the [n × n] score matrix
     in and out of memory. FlashAttention computes the identical result in tiles that never leave
     fast on-chip memory — an exact algorithm, not an approximation, and a lesson in how hardware
