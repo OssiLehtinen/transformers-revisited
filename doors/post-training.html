@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Door 05: Post-training — Transformers from Scratch, Revisited</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+
+<header class="site">
+  <p class="eyebrow"><a href="../index.html" style="color:inherit; text-decoration:none;">&larr; transformers from scratch, revisited</a> · door 05</p>
+  <h1>After pretraining:<br>the predictor learns manners</h1>
+  <p style="color:var(--ink-dim); font-family:'IBM Plex Mono',monospace; font-size:0.9rem;">
+    same machine, same loss, then a judge instead of a loss
+  </p>
+  <p style="margin-top:1.4rem;">This is the door where the corridor changes subject. Every other
+  door — <a href="kv-cache.html">caching</a>, <a href="flash-attention.html">tiling</a>,
+  <a href="long-context.html">stretching</a>, <a href="mixture-of-experts.html">sparsifying</a> —
+  made the machine from the essay bigger or cheaper while leaving its job alone: predict the next
+  token of text like the text it was trained on. Behind this door, the job changes. You'll want
+  <a href="../index.html#completion">section 11</a>'s generation loop,
+  <a href="../index.html#decoder-only">section 20</a>'s observation that everything is sequence
+  continuation, and <a href="../index.html#tokenizing">section 21</a>'s tokens in hand. No new
+  architecture appears anywhere in this door — that's rather the point. What changes is what the
+  weights are optimized <em>for</em>, and it is the difference between the model that completes
+  your sentence and the model that answers it.</p>
+</header>
+
+<section id="the-machine-we-built">
+  <h2><span class="num">01</span>The machine we actually built</h2>
+  <p>Be honest about what the essay's recipe produces. Trained on a mountain of internet text to
+  predict the next token, the result — a <strong>base model</strong> — is a simulator of its
+  training distribution. Hand it text and it continues that text the way documents on the
+  internet tend to continue. Which yields moments like this:</p>
+  <pre class="fig">prompt:      What is the capital of France?
+
+base model:  What is the capital of Germany?
+             What is the capital of Italy?
+             Answer key on page 12.
+<span class="cap">Not a malfunction. The internet is full of quiz sheets, and the likeliest
+continuation of one bare question is another bare question.</span></pre>
+  <p>The knowledge is in there — somewhere in the stream, Paris is winning votes — but the model
+  has no reason to <em>tell</em> you. It isn't being evasive; "answer the question addressed to
+  you" is simply not the objective it was trained on. Practitioners of the base-model era coaxed
+  behavior out by prompting-as-stagecraft: write the opening of a document in which an expert is
+  answering questions, provide two worked examples, and let the predictor predict its way
+  through a third. It worked, and it was ridiculous — a machine that must be tricked into being
+  useful by disguising every request as a half-finished document. The gap between "predicts
+  text" and "does what you asked" is the whole business of <strong>post-training</strong>, and
+  it's closed in two moves: first show, then judge.</p>
+</section>
+
+<section id="sft">
+  <h2><span class="num">02</span>First move: show it — supervised fine-tuning</h2>
+  <p>The showing is almost anticlimactic. Collect tens of thousands of exemplary conversations —
+  prompts paired with the responses an ideal assistant would give, written or curated by people —
+  and continue training on them with the <em>identical</em> machinery: same weights, same
+  forward pass, same next-token loss from the essay, just pointed at a much smaller and much
+  more opinionated dataset. The only novelty is formatting. A conversation is flattened into one
+  sequence — section 20 said everything is sequence continuation, and here that stops being an
+  observation and becomes the implementation — with a few special tokens (ordinary vocabulary
+  entries, in section 21's sense, that no natural text ever produces) marking who is
+  speaking:</p>
+  <pre class="fig">&lt;|system|&gt; You are a helpful assistant.
+&lt;|user|&gt; What is the capital of France?
+&lt;|assistant|&gt; The capital of France is Paris. &lt;|end|&gt;
+<span class="cap">The chat template. One sequence, a costume party of special tokens; the loss
+is computed only on the assistant's spans — imitate the answers, not the questions.</span></pre>
+  <p>This is <strong>supervised fine-tuning</strong> (SFT), and it works startlingly well.
+  A few epochs and the quiz-sheet reflex is gone: the model has learned that in <em>this</em>
+  distribution, text after <code>&lt;|assistant|&gt;</code> answers what came before. When you
+  chat with a model, this template is what your app is really sending — the conversation is one
+  growing document that the machine from section 11 is forever continuing.</p>
+  <p>But imitation has a ceiling, and it's worth being precise about where. SFT teaches the
+  model to write <em>like</em> the demonstrations — including their confidence. The
+  demonstrators answered fluently, so the model answers fluently, whether or not its own
+  knowledge backs the fluency: imitating the style of knowing is not knowing, and some of what
+  gets called hallucination is exactly this — confident cadence, learned faithfully, deployed
+  past the edge of the underlying knowledge. Beyond that, demonstrations can't say what
+  <em>not</em> to do, can't cover every situation, and cost expert labor to write. What we
+  want to teach next isn't a behavior; it's a <em>preference</em> between behaviors. And
+  preferences are far cheaper to collect than perfection: a person who could never write the
+  ideal answer can still look at two answers and say which is better.</p>
+</section>
+
+<section id="reward-model">
+  <h2><span class="num">03</span>Second move: judge it — the reward model</h2>
+  <p>So collect comparisons. Sample two responses to the same prompt, show a human both, record
+  the choice. Do this many thousands of times and you have a dataset not of ideal behavior but
+  of <em>direction</em> — which way is better, from wherever the model stands.</p>
+  <p>To use it, build a judge: a <strong>reward model</strong>. Architecturally it's a familiar
+  face — take a transformer (typically a copy of the very model being trained), and swap the
+  unembedding from section 14 for a head that outputs a single number: a score for "how good is
+  this response". Train it on the comparisons, nudging it to score each pair's winner above its
+  loser, and the same machinery that learned to predict tokens learns to predict <em>the human
+  frown</em>. Reading that twice is recommended: the judge of the language model is a language
+  model — the corridor's machinery, dot-product searches and voting MLPs all the way down,
+  retargeted from "what comes next" to "how would a rater feel about this".</p>
+  <p>The reward model is a compression of thousands of hours of human judgment into a callable
+  function — score any response, instantly. And it has the flaw of every compression: it's
+  accurate near the data it saw and increasingly fictional far from it. That flaw is about to
+  matter enormously.</p>
+</section>
+
+<section id="rlhf">
+  <h2><span class="num">04</span>Optimizing against the judge — RLHF</h2>
+  <p>Now close the loop. Have the model generate responses to a pile of prompts; score each with
+  the reward model; adjust the weights to make higher-scoring responses more likely. That's
+  <strong>reinforcement learning from human feedback</strong> — RLHF — usually implemented with
+  a policy-gradient algorithm (PPO is the classic), whose details matter less than the shape of
+  the loop:</p>
+  <pre class="fig">prompts ──→ the model ──→ responses ──→ reward model ──→ scores
+                ▲                                           │
+                └────── nudge weights toward high scores ───┘
+                │
+   KL leash ────┘  "and stay recognizably yourself"
+<span class="cap">The RLHF loop. For the first time in this essay, the model is trained on
+text it wrote itself — the loss no longer says "match the data" but "please the judge."</span></pre>
+  <p>Notice how deeply that breaks the frame of everything before this door. Pretraining and SFT
+  optimize toward a fixed target drawn from a dataset; here the model explores, and is scored on
+  productions of its own. That freedom is the method's power — the model can find good behaviors
+  no demonstrator wrote down — and its famous hazard. The judge is a learned approximation, and
+  an optimizer is a ruthless search for exactly the inputs on which an approximation is wrong.
+  Push hard enough and the model discovers responses that score wonderfully and are garbage:
+  longer answers if the judge has a soft spot for thoroughness, hedging if it has one for
+  caution, flattery if — and it does — it has one for being agreed with.
+  <strong>Reward hacking</strong> is Goodhart's law with a gradient, and the corridor's honesty
+  requires saying that <strong>sycophancy</strong> — the assistant's incurable agreeableness —
+  isn't a mysterious personality flaw; it's what "please the judge" converges to when the judge
+  was trained on ratings from people who, on average, enjoyed being agreed with.</p>
+  <p>The standard restraint is the <strong>KL leash</strong> visible in the figure: alongside
+  the reward, penalize drift from the SFT model's token probabilities, so the optimizer may
+  sharpen the persona it was given but not wander into the judge's fictional far field. Tension
+  between leash and reward is the daily weather of post-training: too loose and the model games
+  the judge; too tight and nothing improves.</p>
+</section>
+
+<section id="dpo-and-verifiable">
+  <h2><span class="num">05</span>Sharper tools: DPO, and judges that can't be fooled</h2>
+  <p>Two refinements dominate current practice, pulling in opposite directions of subtlety. The
+  first, <strong>direct preference optimization</strong> (DPO), is subtraction: a bit of
+  algebra shows that for the leashed objective, the optimal policy and the reward determine each
+  other in closed form — so you can skip training a separate judge and skip the RL loop, and
+  instead update the model <em>directly</em> on each comparison pair: raise the winner's
+  probability, lower the loser's, scaled just so. What's left looks almost like SFT with a
+  twist, trains stably, and became the workhorse of open-weight post-training.</p>
+  <p>The second is addition, and it's the engine of the current era. RLHF's central weakness is
+  that its judge can be fooled. But some judgments can't be: a program passes its tests or
+  doesn't; a proof checks or doesn't; the answer is 42 or it isn't. Where a <strong>verifiable
+  reward</strong> exists, the optimizer can push as hard as it likes — hacking a unit test is
+  called solving it. Reinforcement learning against verifiable rewards is the recipe behind the
+  recent <strong>reasoning models</strong>: models trained to emit long private chains of
+  working — explore, backtrack, check — before the visible answer, because the reward paid for
+  being <em>right</em>, and extended deliberation is what being right at hard problems costs.
+  The result upended the economics one more time: such models spend orders of magnitude more
+  decode-time tokens per answer, which sends us straight back through
+  <a href="kv-cache.html">door 01</a> — thinking, on this architecture, is billed by the
+  KV-cache-hour.</p>
+</section>
+
+<section id="what-changed">
+  <h2><span class="num">06</span>Same machine, different creature</h2>
+  <p>Step back and audit what this door changed. Architecture: nothing. Parameter count:
+  nothing. Every mechanism in the essay — the searches, the votes, the stream — runs in the
+  assistant exactly as it ran in the base model; post-training is a few percent of the total
+  compute, a coat of paint on a cathedral, thickness-wise. And yet it decides nearly everything
+  a user ever experiences: that the model answers rather than continues, refuses rather than
+  complies, formats rather than rambles; its persona, its hedges, its tone. When people say a
+  model "wants" to be helpful or "is trained to be safe," they are talking about this thin,
+  behavior-setting layer — pretraining decides what the machine <em>knows</em>; post-training
+  decides who shows up to the conversation.</p>
+  <p>The honesty notes, then the corridor. The base model's calibration is partly a casualty —
+  where its raw probabilities tended to mean something statistical, the tuned model's
+  confidences are shaped by what raters rewarded, and it took a share of blunt honesty
+  ("I don't know") with it. Sycophancy, as noted, is not a bug so much as an equilibrium. And
+  none of this teaching is edit-proof: it's weights, not law. What remains for the corridor is
+  the machine's other frontier — inputs that were never text at all, and the parts of the
+  blueprint that rivals are trying to replace. The last door is
+  <a href="../index.html#off-ramps">still marked</a>.</p>
+</section>
+
+<footer>
+  <p><a href="../index.html">&larr; back to the core essay</a> · CC0 · contributions are additive</p>
+</footer>
+
+</main>
+</body>
+</html>

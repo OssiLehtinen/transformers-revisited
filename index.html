@@ -660,7 +660,9 @@
   need — recurrence can go") was aimed squarely against. The family portrait, correctly labeled:
   encoder-only reads (BERT and its descendants, most embedding models), decoder-only writes (nearly
   everything you've chatted with), encoder–decoder transforms (translation, and tasks shaped like
-  it).</p>
+  it). As for how a raw sequence-continuer becomes something you'd <em>want</em> to chat with —
+  that's post-training, and its door is open:
+  <a href="doors/post-training.html">after pretraining</a>.</p>
 </section>
 
 <section id="tokenizing">
@@ -727,9 +729,9 @@
     token doesn't. Most frontier models are now sparse in this sense.</p>
   </div>
 
-  <div class="stub">
-    <span class="tag">door 05 · sign only</span>
-    <h3>After pretraining: instruction tuning and RLHF</h3>
+  <div class="stub open">
+    <span class="tag">door 05 · open</span>
+    <h3><a href="doors/post-training.html">After pretraining: instruction tuning and RLHF</a></h3>
     <p>Everything in this essay produces a next-token predictor. The step from "continues text" to
     "answers questions and follows instructions" is post-training — supervised fine-tuning on
     demonstrations, then optimization against learned preferences. Same architecture, different
