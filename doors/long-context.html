@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Door 03: Long Context — Transformers from Scratch, Revisited</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+
+<header class="site">
+  <p class="eyebrow"><a href="../index.html" style="color:inherit; text-decoration:none;">&larr; transformers from scratch, revisited</a> · door 03</p>
+  <h1>Long context:<br>stretching the clock</h1>
+  <p style="color:var(--ink-dim); font-family:'IBM Plex Mono',monospace; font-size:0.9rem;">
+    how a model trained on 8,000 tokens reads a novel
+  </p>
+  <p style="margin-top:1.4rem;">This door opens off <a href="../index.html#position">section
+  13</a>, and that section is a hard prerequisite: everything here happens to RoPE's rotating
+  probes, the clock hands with their fast and slow frequencies. The first two doors —
+  <a href="kv-cache.html">the KV cache</a> and <a href="flash-attention.html">FlashAttention</a> —
+  are about the <em>cost</em> of a long context, and they'll be referenced when the bill shows up.
+  But cost is the smaller half of this story. The stranger half is that a model trained on
+  sequences of 8,000 tokens doesn't merely slow down past 8,000 — it falls apart, even though
+  nothing in the attention equation mentions a maximum length at all. Behind this door: why it
+  breaks, the clock-repair tricks that fix it, and an honest look at whether the model that
+  <em>can</em> read a novel actually <em>does</em>.</p>
+</header>
+
+<section id="two-walls">
+  <h2><span class="num">01</span>Two walls, not one</h2>
+  <p>Nothing in the machinery we built has a hard length limit. Attention compares every query
+  against every key, however many there are; the MLPs work position by position and couldn't care
+  less. So why does a context window have a number on it?</p>
+  <p>Because there are two separate walls. The first is the <strong>bill</strong>: attention's
+  arithmetic grows quadratically with length (door 02 made it cheaper to pay, not smaller), and
+  the KV cache charges rent per token held in memory (door 01's entire ledger). The second wall
+  is sneakier: <strong>generalization</strong>. A model is a creature of its training
+  distribution, and a model trained on 8k-token documents has simply never <em>seen</em> what
+  position 30,000 looks like. Asked to continue a longer sequence anyway, it doesn't degrade
+  politely — perplexity doesn't creep up, it detonates, often within a few hundred tokens past
+  the boundary.</p>
+  <p>The second wall is the interesting one, because to locate it precisely you have to ask:
+  seen what, exactly? The token embeddings don't know about position. The residual stream
+  doesn't. With RoPE, position lives in exactly one place — the angles of the rotated search
+  probes. So that is where long context has to break, and where it has to be fixed.</p>
+</section>
+
+<section id="what-breaks">
+  <h2><span class="num">02</span>What actually breaks: angles nobody swept</h2>
+  <p>Recall the clock from section 13. Each pair of dimensions in a query or key is a hand that
+  winds forward as position advances, and the hands run at wildly different speeds. With the
+  standard settings, the fastest hand completes a full turn every ~6 tokens; the slowest needs
+  about <strong>63,000 tokens</strong> to come around once. That spread was the design: second
+  hands to separate neighbors, hour hands to separate chapters.</p>
+  <p>Now train on 8k-token documents and take inventory of what each hand experienced:</p>
+  <svg viewBox="0 0 640 190" role="img" aria-label="Fast hands sweep every angle during training; slow hands only a small arc; beyond the training length lie angles never seen" style="width:100%; max-width:640px; margin:1.4rem 0; display:block;">
+    <g stroke="#2e7a4e" stroke-width="1" fill="none">
+      <circle cx="110" cy="90" r="55"/>
+      <circle cx="320" cy="90" r="55"/>
+      <circle cx="530" cy="90" r="55"/>
+    </g>
+    <circle cx="110" cy="90" r="55" fill="none" stroke="#59e389" stroke-width="4" opacity="0.45"/>
+    <path d="M 375 90 A 55 55 0 0 0 358.2 50.4" fill="none" stroke="#59e389" stroke-width="4" opacity="0.45"/>
+    <g stroke="#59e389" stroke-width="2">
+      <line x1="110" y1="90" x2="149" y2="51"/>
+      <line x1="320" y1="90" x2="358.2" y2="50.4"/>
+    </g>
+    <line x1="530" y1="90" x2="475.2" y2="93.8" stroke="#e3b341" stroke-width="2" stroke-dasharray="5 4"/>
+    <g fill="#59e389" font-size="12">
+      <text x="110" y="172" text-anchor="middle">fast hand</text>
+      <text x="320" y="172" text-anchor="middle">slow hand</text>
+    </g>
+    <text x="530" y="172" text-anchor="middle" fill="#e3b341" font-size="12">position 32,000</text>
+    <g fill="#6d816f" font-size="11">
+      <text x="110" y="22" text-anchor="middle">wrapped ~1,300 times:</text>
+      <text x="320" y="22" text-anchor="middle">swept 46° in 8k tokens:</text>
+      <text x="530" y="22" text-anchor="middle">an angle no training</text>
+      <text x="110" y="36" text-anchor="middle">every angle seen</text>
+      <text x="320" y="36" text-anchor="middle">the rest is terra incognita</text>
+      <text x="530" y="36" text-anchor="middle">example ever produced</text>
+    </g>
+  </svg>
+  <p class="figcap">fig 1 · the training inventory of three clock hands. highlighted arcs are
+  angles actually visited during training; the dashed hand asks for one that wasn't.</p>
+  <p>The fast hands wrapped around thousands of times — every angle on their dials appeared in
+  training, so no position will ever surprise them. But the slowest hand, with its 63k-token
+  period, crawled through a mere 46° of its dial. The model's learned probes — every "match this,
+  but prefer recent instances" behavior it acquired — were fit to key-query angle combinations
+  drawn from that thin arc. Position 30,000 puts the slow hands somewhere they have literally
+  never pointed. The dot products come back with values outside anything the softmax's learned
+  temperature expects; scores that should be gentle preferences become lurching noise; and the
+  next-token distribution goes to pieces. The model didn't learn "position" in the abstract. It
+  learned behavior on the angles it saw.</p>
+  <p>Framed that way, the fix suggests itself. We can't quickly teach the model new angles —
+  that's what expensive long-context training is. But we <em>control the clock</em>. The angles
+  are computed from the position index at inference time; nothing stops us from lying about the
+  time.</p>
+</section>
+
+<section id="interpolation">
+  <h2><span class="num">03</span>First fix: slow the whole clock down</h2>
+  <p><strong>Position interpolation</strong> is the blunt version of the lie. To run a model
+  trained at 8k out to 32k, divide every position index by 4 before computing the rotations.
+  Token 32,000 now claims to sit at position 8,000; every hand stays within the arc it swept
+  during training; nothing is ever out of distribution.</p>
+  <pre class="fig">real positions:      0 &hellip;&hellip;&hellip;&hellip;&hellip;&hellip;&hellip;&hellip;&hellip;&hellip;&hellip;&hellip; 32,000
+                      ↓        divide by 4        ↓
+angles fed to RoPE:  0 ………… 8,000   ← the swept arc, reused
+<span class="cap">Interpolation: compress the novel into the stretch of dial the model knows.
+Nothing is extrapolated; everything is crowded.</span></pre>
+  <p>It works — with a short fine-tune to let the model acclimatize, a few thousand steps rather
+  than a retraining. But listen to what it does to the fast hands. The second hand used to
+  advance a quarter-turn per token; now it advances a sixteenth. Adjacent tokens, which the model
+  told apart by crisp, well-separated angles, now huddle four times closer together on every
+  dial. Local resolution — exactly the thing the fast hands existed to provide — gets blurred, and
+  it shows up as a real (if modest) hit on ordinary short-context tasks. We rewound the hour
+  hand, which was necessary, and also the second hand, which was vandalism.</p>
+</section>
+
+<section id="yarn">
+  <h2><span class="num">04</span>Second fix: repair each hand separately</h2>
+  <p>The obvious refinement: the hands are independent, so lie to each one differently. The fast
+  hands have wrapped many times — every angle on their dial is familiar territory — so leave them
+  running at full speed and full resolution. The slow hands are the ones about to point into the
+  void, so slow <em>them</em> down until 32,000 tokens fits inside their swept arc. Hands in
+  between get scaled in between.</p>
+  <p>This is the shared idea behind the <strong>NTK-aware</strong> scalings and
+  <strong>YaRN</strong>, which differ in bookkeeping rather than in spirit: per-frequency
+  interpolation, judged by how many times each hand wrapped during training. (YaRN adds one more
+  repair that answers for a different symptom: with vastly more tokens in view, each softmax row
+  spreads its attention thinner — more candidates, more entropy — so it applies a small
+  temperature correction to the scores, resharpening the search. Two fixes, two failure modes,
+  one method.) The result was startlingly effective: extensions from 8k or 32k out to 128k with
+  brief fine-tuning became the standard recipe, and variants of it sit inside most of the
+  long-context models you have actually used.</p>
+  <p>Two closing notes on the clock itself. First, models trained <em>since</em> this all became
+  understood mostly bake the lesson in from the start: crank the base of the frequency spectrum
+  up (the <code>rope_theta</code> you'll meet in model configs, 10,000 in the original recipe,
+  500,000 or more now), so even the slow hands turn slowly enough that enormous contexts stay
+  inside a modest arc, then include genuinely long documents late in training. Retrofit surgery
+  became factory spec. Second — honesty — none of this made position 200,000
+  <em>meaningful</em>. It made the angles at position 200,000 <em>familiar</em>. Whether the
+  model can do anything useful with a probe at that distance is a question about training data
+  and attention capacity, and it's the subject of the last section. A stretched clock is not
+  the same thing as a long memory.</p>
+</section>
+
+<section id="paying-anyway">
+  <h2><span class="num">05</span>The other wall: not attending to everything</h2>
+  <p>Meanwhile the first wall still stands. A 128k context means every new token's probe scores
+  128k keys (door 02 makes this fast, not free), and door 01's ledger says the cache for it
+  occupies gigabytes per sequence, read end-to-end for every generated token. The second family
+  of long-context tricks accepts a blunt bargain: <strong>don't attend to everything</strong>.</p>
+  <p>The workhorse is <strong>sliding-window attention</strong>: each position attends only to
+  the last w tokens — the causal mask's triangle trimmed to a diagonal band. This looks like
+  giving up on long range entirely, but stack the layers and watch the information travel:</p>
+  <pre class="fig">layer 3:                        ▓ ← sees t−3w &hellip; t, via two hops
+layer 2:              ▓▓▓▓▓▓▓▓▓▓▓
+layer 1:    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+tokens:   &hellip;──────────────────────t
+<span class="cap">A window of w per layer, but the residual stream carries what layer 1 gathered
+into layer 2's window: reach compounds by ~w per layer, like receptive fields in a CNN.</span></pre>
+  <p>Each token's slot in the residual stream summarizes its neighborhood; the next layer's
+  window reads those summaries, so effective reach grows by a window per layer — distant content
+  arrives in hops rather than one glance. And the cache rent stops growing: a windowed layer
+  keeps only w entries, period (the corridor's doors keep opening onto each other). Production
+  models mostly mix the two kinds of layer — a few full-attention layers interleaved among many
+  windowed ones, on the theory that most retrieval is local and a handful of layers with a
+  telescope can serve the rest.</p>
+  <p>One genuinely odd footnote from this line of work: models lean surprisingly hard on the
+  <em>first</em> few tokens of the sequence — evict them from a sliding cache and generation
+  destabilizes. The leading explanation is that softmax must distribute weight
+  <em>somewhere</em> even when a probe matches nothing, and the ever-present earliest tokens
+  become the designated dumping ground — an <strong>attention sink</strong>. Long-context
+  serving systems now simply pin those tokens in the cache. File under: the machine develops
+  habits its blueprint never mentions.</p>
+</section>
+
+<section id="does-it-read">
+  <h2><span class="num">06</span>Does it actually read the novel?</h2>
+  <p>So the clock is stretched, the window is managed, the rent is paid, and the spec sheet says
+  1,000,000 tokens. The honesty section asks: does the model <em>use</em> them?</p>
+  <p>The standard first check is a <strong>needle in a haystack</strong>: bury one odd fact in a
+  vast context and ask for it. Stretched models mostly pass — the searchlight, once the angles
+  are familiar, is genuinely good at finding a distinctive match at range, which is unsurprising
+  for a machine whose core primitive is a batch of dot-product searches. But passing it is table
+  stakes, not reading. Ask instead for something that requires <em>holding the whole text in
+  mind</em> — tallying every appearance of a character, combining a clause on page 12 with its
+  amendment on page 840 — and performance degrades well before the advertised limit, with a
+  famous bias pattern: strongest near the beginning and end of the context, weakest in the
+  middle. The effective context of a model is routinely shorter than its accepted context, and
+  the gap between the two numbers is precisely what the marketing does not print.</p>
+  <p>It's also worth saying what long context is <em>for</em>, because there's a rival with the
+  same job description. If the task is "answer questions against a big pile of documents," you
+  can attend over the pile — or you can <strong>retrieve</strong> from it: embed the documents,
+  embed the question, and fetch the best dot-product matches into a short, dense context
+  (retrieval-augmented generation, RAG). Notice what that is: the search primitive from
+  <a href="../index.html#dot-product">section 02</a>, run <em>outside</em> the model, over a
+  corpus instead of a residual stream. The field's actual practice settled into using both —
+  retrieval to select what deserves attention, long context to let the model see all of what was
+  selected at once.</p>
+  <p>The moral of the door, then, in one line each. Length is two problems, cost and
+  familiarity, with separate cures. Position is angles, and angles can be repaired at the clock
+  face. And a context <em>window</em> is exactly that — glass you can see through, not memory
+  you can rely on; how the model's real memory works when the window closes is a story that
+  runs through several of the <a href="../index.html#off-ramps">doors still marked</a> in the
+  corridor.</p>
+</section>
+
+<footer>
+  <p><a href="../index.html">&larr; back to the core essay</a> · CC0 · contributions are additive</p>
+</footer>
+
+</main>
+</body>
+</html>

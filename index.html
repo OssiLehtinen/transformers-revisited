@@ -392,7 +392,8 @@
   nearby" prior that extrapolates gracefully; and some recent models use <em>no</em> positional
   scheme in certain layers at all, since the causal mask alone leaks enough ordering information
   for the model to reconstruct position. The choice of scheme also turns out to be the crux of
-  extending models to very long contexts — that door is marked in section 22.</p>
+  extending models to very long contexts — that door is open:
+  <a href="doors/long-context.html">long context</a>.</p>
 </section>
 
 <section id="unembedding">
@@ -709,9 +710,9 @@
     shapes what "efficient" means.</p>
   </div>
 
-  <div class="stub">
-    <span class="tag">door 03 · sign only</span>
-    <h3>Long context</h3>
+  <div class="stub open">
+    <span class="tag">door 03 · open</span>
+    <h3><a href="doors/long-context.html">Long context</a></h3>
     <p>How does a model trained on 8k tokens read a novel? Mostly by careful manipulation of RoPE's
     rotation frequencies (position interpolation, YaRN, and kin), plus attention variants — sliding
     windows, sparse patterns — that soften the quadratic wall. Section 13 is the prerequisite.</p>
