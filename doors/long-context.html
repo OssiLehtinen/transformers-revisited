@@ -13,12 +13,12 @@
 <main>
 
 <header class="site">
-  <p class="eyebrow"><a href="../index.html" style="color:inherit; text-decoration:none;">&larr; transformers from scratch, revisited</a> · door 03</p>
+  <p class="eyebrow"><a href="../index.html">&larr; transformers from scratch, revisited</a> · door 03</p>
   <h1>Long context:<br>stretching the clock</h1>
-  <p style="color:var(--ink-dim); font-family:'IBM Plex Mono',monospace; font-size:0.9rem;">
+  <p class="subtitle">
     how a model trained on 8,000 tokens reads a novel
   </p>
-  <p style="margin-top:1.4rem;">This door opens off <a href="../index.html#position">section
+  <p class="lede">This door opens off <a href="../index.html#position">section
   13</a>, and that section is a hard prerequisite: everything here happens to RoPE's rotating
   probes, the clock hands with their fast and slow frequencies. The first two doors —
   <a href="kv-cache.html">the KV cache</a> and <a href="flash-attention.html">FlashAttention</a> —
@@ -57,7 +57,7 @@
   about <strong>63,000 tokens</strong> to come around once. That spread was the design: second
   hands to separate neighbors, hour hands to separate chapters.</p>
   <p>Now train on 8k-token documents and take inventory of what each hand experienced:</p>
-  <div class="svgwrap"><svg viewBox="0 0 640 190" role="img" aria-label="Fast hands sweep every angle during training; slow hands only a small arc; beyond the training length lie angles never seen" style="width:100%; max-width:640px; margin:1.4rem 0; display:block;">
+  <div class="svgwrap"><svg viewBox="0 0 640 190" role="img" aria-label="Fast hands sweep every angle during training; slow hands only a small arc; beyond the training length lie angles never seen" class="figsvg">
     <g stroke="#2e7a4e" stroke-width="1" fill="none">
       <circle cx="110" cy="90" r="55"/>
       <circle cx="320" cy="90" r="55"/>
@@ -107,7 +107,7 @@
   trained at 8k out to 32k, divide every position index by 4 before computing the rotations.
   Token 32,000 now claims to sit at position 8,000; every hand stays within the arc it swept
   during training; nothing is ever out of distribution.</p>
-  <pre class="fig">real positions:      0 ………………………… 32,000
+  <pre class="fig" role="img" aria-label="Position interpolation: real positions 0 through 32,000 are divided by four so the angles fed to RoPE stay within the 0-to-8,000 range swept during training — nothing is extrapolated, everything is crowded.">real positions:      0 ………………………… 32,000
                      ↓  divide by 4  ↓
 angles fed to RoPE:  0 ………………………… 8,000   ← the swept arc, reused
 <span class="cap">Interpolation: compress the novel into the stretch of dial the model knows.
@@ -158,7 +158,7 @@ Nothing is extrapolated; everything is crowded.</span></pre>
   <p>The workhorse is <strong>sliding-window attention</strong>: each position attends only to
   the last w tokens — the causal mask's triangle trimmed to a diagonal band. This looks like
   giving up on long range entirely, but stack the layers and watch the information travel:</p>
-  <pre class="fig">layer 3:                        ▓ ← sees t−3w &hellip; t, via three window-reads
+  <pre class="fig" role="img" aria-label="Stacked sliding windows: each layer attends over a window of the layer below, so reach compounds by about one window per layer, like receptive fields in a CNN — layer three's position reaches three windows back through three successive window-reads.">layer 3:                        ▓ ← sees t−3w &hellip; t, via three window-reads
 layer 2:              ▓▓▓▓▓▓▓▓▓▓▓
 layer 1:    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 tokens:   &hellip;─────────────────────t

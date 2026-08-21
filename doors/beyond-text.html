@@ -13,12 +13,12 @@
 <main>
 
 <header class="site">
-  <p class="eyebrow"><a href="../index.html" style="color:inherit; text-decoration:none;">&larr; transformers from scratch, revisited</a> · door 06</p>
+  <p class="eyebrow"><a href="../index.html">&larr; transformers from scratch, revisited</a> · door 06</p>
   <h1>Beyond text,<br>and beyond attention</h1>
-  <p style="color:var(--ink-dim); font-family:'IBM Plex Mono',monospace; font-size:0.9rem;">
+  <p class="subtitle">
     the stream doesn't know it's reading
   </p>
-  <p style="margin-top:1.4rem;">The last door in the corridor opens off
+  <p class="lede">The last door in the corridor opens off
   <a href="../index.html#embeddings">section 12</a>, on the strength of one sentence there:
   after the embedding, <em>everything happens to dense vectors</em> — the one-hot symbols
   appear only at the entrance and the exit. That makes the entrance a border crossing, and
@@ -55,7 +55,7 @@
   values into one long vector, and push each through a single learned linear projection
   (section 12's move, minus the one-hot: a lookup table softened into a linear map) to width d.
   Read the patches left-to-right, top-to-bottom, like text:</p>
-  <pre class="fig">  ┌────┬────┬────┬────┐
+  <pre class="fig" role="img" aria-label="The vision transformer's entrance: an image is sliced into a grid of 16-by-16 patches; each patch's 768 raw numbers (16 by 16 by 3 color channels) pass through one learned linear projection to become a d-dimensional visual token, and the resulting patch sequence feeds the same transformer as text.">  ┌────┬────┬────┬────┐
   │ p1 │ p2 │ p3 │ p4 │     one 16×16 patch × 3 color channels = 768 raw numbers
   ├────┼────┼────┼────┤         │ learned linear projection
   │ p5 │ p6 │ …       │         ▼

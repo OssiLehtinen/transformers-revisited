@@ -15,10 +15,10 @@
 <header class="site">
   <p class="eyebrow">e2eml lineage · rebuilt &amp; brought current, 2026</p>
   <h1>Transformers from Scratch,<br>Revisited</h1>
-  <p style="color:var(--ink-dim); font-family:'IBM Plex Mono',monospace; font-size:0.9rem;">
+  <p class="subtitle">
     counting → dot products → lookups → attention → a modern decoder-only stack
   </p>
-  <p style="margin-top:1.4rem;">This is a rebuild of Brandon Rohrer's 2021 essay
+  <p class="lede">This is a rebuild of Brandon Rohrer's 2021 essay
   <a href="https://brandonrohrer.com/transformers.html"><em>Transformers from Scratch</em></a>, which he generously
   released under CC0. The original's great idea — that you can reconstruct a transformer starting from
   nothing but counting and arithmetic, with the dot product as a search operation at the center of it all —
@@ -130,7 +130,7 @@
 <section id="first-order">
   <h2><span class="num">04</span>First order sequence model</h2>
   <p>Back to language. Suppose our command computer only ever hears three sentences:</p>
-  <p style="font-family:'IBM Plex Mono',monospace; font-size:0.92rem; color:#a8e6bd;">
+  <p class="mono-ex">
   show me my directories please.<br>show me my files please.<br>show me my photos please.</p>
   <p>The vocabulary is seven words. A natural way to model the sequences is a <strong>transition
   model</strong>: for each word, what's likely to come next? If users ask for photos half the time,
@@ -153,7 +153,7 @@
   <p>Predicting the next word from just the current one is like guessing a tune after hearing a
   single note. Two notes go a lot further. Consider a model that only ever sees these two
   sentences, 40/60:</p>
-  <p style="font-family:'IBM Plex Mono',monospace; font-size:0.92rem; color:#a8e6bd;">
+  <p class="mono-ex">
   check whether the battery ran down please.<br>check whether the program ran please.</p>
   <p>A first order model hits a wall at <em>ran</em>: sometimes <em>down</em> follows, sometimes
   <em>please</em>, and it can only shrug and quote the base rates. But a model that looks at the two
@@ -167,7 +167,7 @@
 <section id="skips">
   <h2><span class="num">06</span>Second order sequence model with skips</h2>
   <p>Now the hard case. Two sentences, equally likely:</p>
-  <p style="font-family:'IBM Plex Mono',monospace; font-size:0.92rem; color:#a8e6bd;">
+  <p class="mono-ex">
   check the program log and find out whether it ran please.<br>
   check the battery log and find out whether it ran down please.</p>
   <p>To pick the word after <em>ran</em>, you need to remember a word from <em>eight positions
@@ -361,7 +361,7 @@
   Take each query and key vector, treat its dimensions two at a time as points on a plane, and
   rotate each pair by an angle proportional to the token's position — again with a spectrum of
   frequencies across the pairs, fast hands and slow hands.</p>
-  <div class="svgwrap"><svg viewBox="0 0 640 180" role="img" aria-label="RoPE rotation diagram" style="width:100%; max-width:640px; margin:1.4rem 0; display:block;">
+  <div class="svgwrap"><svg viewBox="0 0 640 180" role="img" aria-label="RoPE rotation diagram" class="figsvg">
     <g stroke="#2e7a4e" stroke-width="1" fill="none">
       <circle cx="110" cy="90" r="55"/>
       <circle cx="320" cy="90" r="55"/>
@@ -506,7 +506,7 @@
   thing: it <em>reads</em> from the stream through its input projections, computes something, and
   <em>writes</em> its result back by addition. Nothing else. The stream is the only memory, the
   only bus, the only way any part of the model talks to any other part.</p>
-  <div class="svgwrap"><svg viewBox="0 0 640 300" role="img" aria-label="Residual stream diagram" style="width:100%; max-width:640px; margin:1.4rem 0; display:block;">
+  <div class="svgwrap"><svg viewBox="0 0 640 300" role="img" aria-label="Residual stream diagram" class="figsvg">
     <line x1="80" y1="20" x2="80" y2="280" stroke="#59e389" stroke-width="3"/>
     <g stroke="#2e7a4e" stroke-width="1.5" fill="none">
       <path d="M 80 60  h 90"/> <path d="M 250 60  h 90 M 340 60 L 80 88" />

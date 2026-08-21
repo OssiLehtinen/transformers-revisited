@@ -13,12 +13,12 @@
 <main>
 
 <header class="site">
-  <p class="eyebrow"><a href="../index.html" style="color:inherit; text-decoration:none;">&larr; transformers from scratch, revisited</a> · door 04</p>
+  <p class="eyebrow"><a href="../index.html">&larr; transformers from scratch, revisited</a> · door 04</p>
   <h1>Mixture of experts:<br>hire more, consult few</h1>
-  <p style="color:var(--ink-dim); font-family:'IBM Plex Mono',monospace; font-size:0.9rem;">
+  <p class="subtitle">
     the parameters balloon; the meter barely moves
   </p>
-  <p style="margin-top:1.4rem;">This door opens off <a href="../index.html#mlp">section 10</a>,
+  <p class="lede">This door opens off <a href="../index.html#mlp">section 10</a>,
   and it pulls on the lopsided fact reported there: the MLPs hold roughly two-thirds of a
   transformer's parameters — they are where the remembering lives. Behind this door, that
   concentration becomes a lever. You'll want section 10's picture of the MLP as
@@ -67,7 +67,7 @@
   router's preferences, and written back to the stream:</p>
   <div class="eq">out = Σ<sub>i ∈ top-k</sub> &nbsp;g<sub>i</sub> · Expert<sub>i</sub>(x),
   &nbsp;&nbsp; g = softmax(router scores)</div>
-  <pre class="fig">token x ──→ router: [ e1: 0.71  e2: 0.03  e3: 0.19  e4: 0.07 ]
+  <pre class="fig" role="img" aria-label="One MoE layer: the router scores a token against four experts, keeps the top two (expert 1 at renormalized weight 0.79 and expert 3 at 0.21), runs only those two, and adds their weighted blend back to the residual stream; the unchosen experts never run and cost nothing.">token x ──→ router: [ e1: 0.71  e2: 0.03  e3: 0.19  e4: 0.07 ]
                          │                   │
                        top-2, renormalized: e1 0.79 · e3 0.21
                          ▼                   ▼

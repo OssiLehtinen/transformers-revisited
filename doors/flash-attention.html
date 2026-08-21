@@ -13,12 +13,12 @@
 <main>
 
 <header class="site">
-  <p class="eyebrow"><a href="../index.html" style="color:inherit; text-decoration:none;">&larr; transformers from scratch, revisited</a> · door 02</p>
+  <p class="eyebrow"><a href="../index.html">&larr; transformers from scratch, revisited</a> · door 02</p>
   <h1>FlashAttention:<br>the same math, faster</h1>
-  <p style="color:var(--ink-dim); font-family:'IBM Plex Mono',monospace; font-size:0.9rem;">
+  <p class="subtitle">
     never write down the thing you're about to throw away
   </p>
-  <p style="margin-top:1.4rem;">This door opens off <a href="../index.html#single-head">section
+  <p class="lede">This door opens off <a href="../index.html#single-head">section
   16</a>, where the full [n&nbsp;×&nbsp;n] attention table appeared, and it leans hard on
   engineering reality #1 from <a href="../index.html#rest-stop">section 08</a> — computers are
   shockingly good at matrix multiplication. Behind this door we discover the fine print on that
@@ -126,7 +126,7 @@ tile; the same rescaling fixes the running blend of values.</span></pre>
   softmax, and let the tile evaporate — it never existed outside the fast room. When the last
   block has streamed past, divide by ℓ and write the finished [block&nbsp;×&nbsp;d] output to
   slow memory, once.</p>
-  <pre class="fig">          K,V blocks →  ▓▓ → ▓▓ → ▓▓ → ▓▓
+  <pre class="fig" role="img" aria-label="Blocks of keys and values stream through fast on-chip memory, where a resident query block computes each score tile and folds it into running softmax statistics; every tile is used and discarded on-chip, only the finished output is written to slow memory, and the full n-by-n table is never materialized.">          K,V blocks →  ▓▓ → ▓▓ → ▓▓ → ▓▓
                          │
   Q block, resident  ┌───▼──────────────────┐
   in the fast room → │ score tile · m, ℓ,   │ → output written

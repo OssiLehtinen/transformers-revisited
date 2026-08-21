@@ -13,12 +13,12 @@
 <main>
 
 <header class="site">
-  <p class="eyebrow"><a href="../index.html" style="color:inherit; text-decoration:none;">&larr; transformers from scratch, revisited</a> · door 05</p>
+  <p class="eyebrow"><a href="../index.html">&larr; transformers from scratch, revisited</a> · door 05</p>
   <h1>After pretraining:<br>the predictor learns manners</h1>
-  <p style="color:var(--ink-dim); font-family:'IBM Plex Mono',monospace; font-size:0.9rem;">
+  <p class="subtitle">
     same machine, same loss, then a judge instead of a loss
   </p>
-  <p style="margin-top:1.4rem;">This is the door where the corridor changes subject. Every other
+  <p class="lede">This is the door where the corridor changes subject. Every other
   door — <a href="kv-cache.html">caching</a>, <a href="flash-attention.html">tiling</a>,
   <a href="long-context.html">stretching</a>, <a href="mixture-of-experts.html">sparsifying</a> —
   made the machine from the essay bigger or cheaper while leaving its job alone: predict the next
@@ -114,7 +114,7 @@ is computed only on the assistant's spans — imitate the answers, not the quest
   <strong>reinforcement learning from human feedback</strong> — RLHF — usually implemented with
   a policy-gradient algorithm (PPO is the classic), whose details matter less than the shape of
   the loop:</p>
-  <pre class="fig">prompts ──→ the model ──→ responses ──→ reward model ──→ scores
+  <pre class="fig" role="img" aria-label="The RLHF loop: prompts go to the model, its responses are scored by the reward model, and the weights are nudged toward high scores — while a KL leash keeps the model recognizably close to its supervised starting point. For the first time, the model is trained on text it wrote itself.">prompts ──→ the model ──→ responses ──→ reward model ──→ scores
                 ▲                                           │
                 ├────── nudge weights toward high scores ───┘
                 │
