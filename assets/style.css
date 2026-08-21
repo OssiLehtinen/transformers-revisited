@@ -148,6 +148,38 @@
   nav.toc a { text-decoration: none; color: var(--ink); }
   nav.toc a:hover { color: var(--phosphor); }
   nav.toc .num { color: var(--phosphor-dim); margin-right: 0.5em; }
+  nav.toc a.active { color: var(--phosphor); }
+  nav.toc a.active .num { color: var(--phosphor); }
+  /* Wide screens: the TOC becomes a fixed sidebar left of the text column. */
+  @media (min-width: 1280px) {
+    nav.toc {
+      position: fixed;
+      top: 50%;
+      transform: translateY(-50%);
+      left: calc(50vw - 38.5rem);
+      width: 15rem;
+      max-height: calc(100vh - 3rem);
+      overflow-y: auto;
+      column-width: auto;
+      margin: 0;
+      padding: 0.9rem 1rem;
+      font-size: 0.76rem;
+      line-height: 1.6;
+      scrollbar-width: thin;
+      scrollbar-color: var(--phosphor-dim) var(--panel);
+    }
+    nav.toc br { display: none; }
+    nav.toc a {
+      display: block;
+      padding: 0.14rem 0.5rem;
+      margin-left: -0.5rem;
+      border-left: 2px solid transparent;
+    }
+    nav.toc a.active {
+      border-left-color: var(--phosphor);
+      background: rgba(89, 227, 137, 0.08);
+    }
+  }
   .stub {
     border: 1px dashed color-mix(in srgb, var(--amber) 55%, transparent);
     border-radius: 6px;

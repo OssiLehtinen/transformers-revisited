@@ -836,5 +836,41 @@
 </footer>
 
 </main>
+
+<script>
+(function () {
+  var nav = document.querySelector("nav.toc");
+  if (!nav) return;
+  var byId = {};
+  var targets = [];
+  nav.querySelectorAll('a[href^="#"]').forEach(function (a) {
+    var el = document.getElementById(a.getAttribute("href").slice(1));
+    if (el) { byId[el.id] = a; targets.push(el); }
+  });
+  if (!targets.length) return;
+  var current = null;
+  function update() {
+    var line = window.innerHeight * 0.3;
+    var active = targets[0];
+    for (var i = 0; i < targets.length; i++) {
+      if (targets[i].getBoundingClientRect().top <= line) active = targets[i];
+    }
+    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) {
+      active = targets[targets.length - 1];
+    }
+    if (active === current) return;
+    if (current) byId[current.id].classList.remove("active");
+    current = active;
+    var link = byId[current.id];
+    link.classList.add("active");
+    if (nav.scrollHeight > nav.clientHeight) {
+      nav.scrollTop = link.offsetTop - nav.clientHeight / 2;
+    }
+  }
+  window.addEventListener("scroll", update, { passive: true });
+  window.addEventListener("resize", update);
+  update();
+})();
+</script>
 </body>
 </html>
