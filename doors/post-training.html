@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Door 05: Post-training — Transformers from Scratch, Revisited</title>
+<title>Door 05: After Pretraining — Transformers from Scratch, Revisited</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/style.css">
 </head>
@@ -115,7 +116,7 @@ is computed only on the assistant's spans — imitate the answers, not the quest
   the loop:</p>
   <pre class="fig">prompts ──→ the model ──→ responses ──→ reward model ──→ scores
                 ▲                                           │
-                └────── nudge weights toward high scores ───┘
+                ├────── nudge weights toward high scores ───┘
                 │
    KL leash ────┘  "and stay recognizably yourself"
 <span class="cap">The RLHF loop. For the first time in this essay, the model is trained on
@@ -149,10 +150,12 @@ text it wrote itself — the loss no longer says "match the data" but "please th
   probability, lower the loser's, scaled just so. What's left looks almost like SFT with a
   twist, trains stably, and became the workhorse of open-weight post-training.</p>
   <p>The second is addition, and it's the engine of the current era. RLHF's central weakness is
-  that its judge can be fooled. But some judgments can't be: a program passes its tests or
-  doesn't; a proof checks or doesn't; the answer is 42 or it isn't. Where a <strong>verifiable
-  reward</strong> exists, the optimizer can push as hard as it likes — hacking a unit test is
-  called solving it. Reinforcement learning against verifiable rewards is the recipe behind the
+  that its judge can be fooled. But some judgments can't be: a proof checks or
+  doesn't; the answer is 42 or it isn't. Where a <strong>verifiable reward</strong> exists, the
+  optimizer can push far harder — against a perfect verifier, "hacking" the judge just <em>is</em>
+  solving the problem. (Honesty demands the fine print: a unit-test suite is only as unhackable
+  as its coverage, and models under this pressure gleefully hard-code expected outputs when the
+  tests permit it — so the craft is largely in building judges worth optimizing against.) Reinforcement learning against verifiable rewards is the recipe behind the
   recent <strong>reasoning models</strong>: models trained to emit long private chains of
   working — explore, backtrack, check — before the visible answer, because the reward paid for
   being <em>right</em>, and extended deliberation is what being right at hard problems costs.
@@ -166,8 +169,9 @@ text it wrote itself — the loss no longer says "match the data" but "please th
   <h2><span class="num">06</span>Same machine, different creature</h2>
   <p>Step back and audit what this door changed. Architecture: nothing. Parameter count:
   nothing. Every mechanism in the essay — the searches, the votes, the stream — runs in the
-  assistant exactly as it ran in the base model; post-training is a few percent of the total
-  compute, a coat of paint on a cathedral, thickness-wise. And yet it decides nearly everything
+  assistant exactly as it ran in the base model; post-training has historically been a few
+  percent of the total compute — a coat of paint on a cathedral, thickness-wise, though the
+  reasoning era is thickening that coat fast. And yet it decides nearly everything
   a user ever experiences: that the model answers rather than continues, refuses rather than
   complies, formats rather than rambles; its persona, its hedges, its tone. When people say a
   model "wants" to be helpful or "is trained to be safe," they are talking about this thin,

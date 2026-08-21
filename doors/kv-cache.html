@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Door 01: The KV Cache — Transformers from Scratch, Revisited</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/style.css">
 </head>
@@ -55,12 +56,12 @@
   sealed by construction.</p>
   <p>Look at what one generation step actually adds to the attention picture:</p>
   <pre class="fig">        keys →   t1   t2   t3   t4  │ t5
-  queries                            │
+  queries                           │
   ↓  t1          ■    −∞   −∞   −∞  │ −∞
      t2          ■    ■    −∞   −∞  │ −∞        old rows: already
      t3          ■    ■    ■    −∞  │ −∞        computed last step,
      t4          ■    ■    ■    ■   │ −∞        unchanged forever
-   ──────────────────────────────────┼─────
+   ─────────────────────────────────┼──────
      t5          □    □    □    □   │ □    ← the only new row
 <span class="cap">One step of generation grows the causal score table by one row (t5's search over
 everything) and one column (t5's key, which no earlier query is allowed to see).</span></pre>
@@ -93,9 +94,9 @@ table, retrieve one blend. Nothing is recomputed; the past is read, not re-deriv
   token and take one row of dot products": linear in the past instead of quadratic, and the summed
   cost of a whole reply drops by a factor of roughly the reply length. Generating token 1,001 does
   about a thousandth of the naive work.</p>
-  <p>Two honesty notes. First, the cache is not an approximation — it produces bit-identical
-  outputs to the naive recomputation (floating-point rounding quirks aside). It's pure
-  bookkeeping, the same trick as remembering a running total instead of re-adding the column of
+  <p>Two honesty notes. First, the cache is not an approximation — it computes mathematically
+  identical outputs to the naive recomputation (only the floating-point rounding order
+  differs). It's pure bookkeeping, the same trick as remembering a running total instead of re-adding the column of
   figures each time. Second, the cache is <em>only</em> possible because the mask is causal.
   A bidirectional model like BERT lets every position see every other, so appending a token would
   genuinely change all the old representations — nothing could be cached. The causal mask looked
@@ -139,16 +140,16 @@ by context length and batch size it out-eats the model itself.</span></pre>
   quality, since every probe now searches the same index of the past.
   <strong>Grouped-query attention</strong> (GQA) is the compromise that stuck: small groups of
   query heads share a KV table. Eight KV heads serving 32 query heads is a typical arrangement —
-  a 4× smaller cache, nearly indistinguishable quality — and some form of it is in
-  essentially every model trained since the mid-2020s. When the main essay's
+  a 4× smaller cache, nearly indistinguishable quality — and some form of head-sharing is in
+  essentially every major model trained since about 2023. When the main essay's
   <a href="../index.html#off-ramps">door sign</a> said the cache's footprint is "what GQA exists
   to shrink," this is the shrinking.</p>
   <p>The squeezing continues past head-sharing, and one honesty note covers the lot: sliding-window
   attention caps how far back some layers may look, so their cache stops growing at the window
   size; quantizing the cache to fewer bytes per number is routine; and the latent-attention family
-  (DeepSeek's MLA and kin) stores a compressed summary from which keys and values are
-  reconstructed on the fly, trading a little arithmetic — the cheap currency — for a lot of
-  memory, the expensive one. Different mechanisms, one motive: everyone is paying rent on the
+  (DeepSeek's MLA and kin) stores only a small compressed latent per token in place of full
+  keys and values, arranging the attention arithmetic to run against the latents directly —
+  a little more math, the cheap currency, for a lot less memory, the expensive one. Different mechanisms, one motive: everyone is paying rent on the
   same table.</p>
 </section>
 
@@ -163,15 +164,17 @@ by context length and batch size it out-eats the model itself.</span></pre>
   the first new token. It is <em>compute</em>-bound: the GPU's multipliers are the bottleneck,
   and they are legion.</p>
   <p><strong>Decode:</strong> then the loop begins, one token at a time, each step a single probe
-  against the whole cache. The arithmetic per step is tiny; the problem is that the step must
-  <em>read the entire cache from memory</em> — gigabytes of table — to do a few million
-  multiplications. Decode is <em>memory-bandwidth</em>-bound: the multipliers idle while bytes
-  crawl in from VRAM. It's also irreducibly serial — token 1,002 cannot start until token 1,001
-  is chosen.</p>
+  against the whole cache. The arithmetic per step is modest; the problem is that the step must
+  <em>read the entire cache — and every one of the model's weights — from memory</em>:
+  gigabytes of traffic to do a few billion multiplications, roughly one multiply per byte
+  fetched when the hardware wants hundreds. Decode is <em>memory-bandwidth</em>-bound: the
+  multipliers idle while bytes crawl in from VRAM. It's also serial by construction — token
+  1,002 depends on token 1,001 — though tricks like speculative decoding claw some wall-clock
+  parallelism back.</p>
   <p>Now read a model provider's price list: input tokens several times cheaper than output
   tokens. That ratio is this door. Input tokens are prefill — parallel, efficient, amortized;
-  output tokens are decode — serial steps, each dragging the full cache past the compute units,
-  each occupying scarce cache memory for the duration. The same split shows up in the feel of a
+  output tokens are decode — serial steps, each dragging the weights and the full cache past
+  the compute units, each occupying scarce cache memory for the duration. The same split shows up in the feel of a
   chat: the pause before the first word is prefill, the steady drip thereafter is decode. Two
   different machines, in effect, running the same weights.</p>
   <p>And that is the economics of inference in one sentence: <strong>generation is a search over

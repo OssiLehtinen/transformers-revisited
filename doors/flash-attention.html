@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Door 02: FlashAttention — Transformers from Scratch, Revisited</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/style.css">
 </head>
@@ -43,7 +44,8 @@
   It is <strong>memory-bound</strong>, and the spec-sheet teraflops are a fantasy for it.</p>
   <p>There is also a third character: a few dozen megabytes of <strong>on-chip memory</strong>
   (SRAM), sitting right beside the arithmetic units, an order of magnitude faster than HBM — and
-  tiny. Everything in this door is about choreographing work so that the bulky intermediate
+  tiny, and carved into slices of a couple hundred kilobytes, one per compute cluster, which is
+  what a working tile must actually fit inside. Everything in this door is about choreographing work so that the bulky intermediate
   results live and die in that small fast room, and the slow big room is visited as rarely as
   possible.</p>
 </section>
@@ -57,8 +59,8 @@
   <pre class="fig">S = QKᵀ/√d      big matmul       → write 16.8M scores out to HBM
 P = softmax(S)   read them back, exponentiate, normalize
                                   → write 16.8M weights out to HBM
-out = PV         read them back  → one row of blends, at last
-<span class="cap">Three round trips of an [n × n] object through slow memory, to produce an
+out = PV         read them back  → the [n × d] table of blends, at last
+<span class="cap">Two full round trips of an [n × n] object through slow memory, to produce an
 [n × d] result. The matmuls fly; the score table commutes.</span></pre>
   <p>The matmuls at either end are compute-bound and genuinely fast. The middle is the problem:
   softmax does a handful of operations per entry, so those two round trips run at memory speed.
@@ -133,14 +135,16 @@ tile; the same rescaling fixes the running blend of values.</span></pre>
         the [n × n] table, never materialized
 <span class="cap">Each score tile is born, used, and discarded on-chip. Slow memory sees only
 Q, K, V on the way in and the finished output on the way out.</span></pre>
-  <p>Slow-memory traffic drops from "three round trips of n²" to "read the inputs, write the
+  <p>Slow-memory traffic drops from "round trips of n²" to "read the inputs, write the
   answer" — the scaffolding is gone from the freight bill. In practice that's a wall-clock
   speedup of roughly two to four times on real workloads, and — often more important — the
   <em>memory</em> needed for attention drops from quadratic in sequence length to linear, since
   the table is never stored. Training on long sequences went from "cannot fit" to "fine" the day
   this shipped, which is much of why it's simply the default in every serious framework now.
-  Later versions (FlashAttention-2 and -3) reorganize the same dance for better parallelism on
-  newer hardware; the choreography improves, the math never changes.</p>
+  (A historical footnote for the careful: the 2022 original streamed <em>query</em> blocks past
+  resident K/V; FlashAttention-2 flipped the loop to the queries-resident version shown here,
+  and -3 retuned the dance for newer hardware. The choreography improves, the math never
+  changes.)</p>
 </section>
 
 <section id="exactness">
@@ -156,10 +160,10 @@ Q, K, V on the way in and the finished output on the way out.</span></pre>
   <strong>exact</strong>. It is not sparse attention, not an approximation, not a new
   architecture — every honesty note from section 16 still applies because it <em>is</em> section
   16, rescheduled. Second: the quadratic <em>arithmetic</em> is all still there; only the
-  quadratic memory traffic is gone. The n² wall was pushed back, not torn down, and the tricks
-  that genuinely soften the quadratic — sliding windows, and the RoPE surgery that stretches
-  context — live behind the next door down the corridor,
-  <a href="long-context.html">now open</a>. Third, and most general: "efficient"
+  quadratic memory traffic is gone. The n² wall was pushed back, not torn down, and behind the next door
+  down the corridor live both the tricks that genuinely soften the quadratic — sliding windows
+  and their kin — and the RoPE surgery that stretches how far a model can see at all; that door
+  is <a href="long-context.html">now open</a>. Third, and most general: "efficient"
   is not a property of an algorithm. It's a property of an algorithm <em>on a machine</em>. The
   math of attention didn't change in 2022; somebody finally read the machine's freight tariff
   closely. It's engineering reality #1 with its second clause restored: computers are shockingly

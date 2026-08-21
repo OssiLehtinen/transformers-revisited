@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Door 06: Beyond Text, Beyond Attention — Transformers from Scratch, Revisited</title>
+<title>Door 06: Beyond Text, and Beyond Attention — Transformers from Scratch, Revisited</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/style.css">
 </head>
@@ -55,9 +56,9 @@
   (section 12's move, minus the one-hot: a lookup table softened into a linear map) to width d.
   Read the patches left-to-right, top-to-bottom, like text:</p>
   <pre class="fig">  ┌────┬────┬────┬────┐
-  │ p1 │ p2 │ p3 │ p4 │     one 16×16 patch = 768 raw numbers
+  │ p1 │ p2 │ p3 │ p4 │     one 16×16 patch × 3 color channels = 768 raw numbers
   ├────┼────┼────┼────┤         │ learned linear projection
-  │ p5 │ p6 │ ...     │         ▼
+  │ p5 │ p6 │ …       │         ▼
   └────┴────┴────┴────┘     one d-dimensional "visual token"
 
   image  →  [ p1 p2 p3 p4 p5 p6 … ]  →  the same transformer
@@ -67,7 +68,7 @@ vectors — a sentence whose words are little squares.</span></pre>
   everything it declined to include. Computer vision's decades of built-in visual wisdom —
   convolutions, locality, translation invariance — replaced by: make it a sequence, add a
   position signal (<a href="../index.html#position">section 13</a>'s chapter, again — in two
-  dimensions now, and modern vision stacks indeed use 2D flavors of RoPE), and let attention
+  dimensions now: learned 2D embeddings classically, and increasingly 2D flavors of RoPE), and let attention
   learn which patches should search for which. Given enough data, the general machine matched
   and then passed the specialized ones — the bitterest of lessons, delivered one more time,
   this time to pixels.</p>

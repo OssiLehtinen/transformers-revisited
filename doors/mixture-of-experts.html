@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Door 04: Mixture of Experts — Transformers from Scratch, Revisited</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/style.css">
 </head>
@@ -35,7 +36,8 @@
   tokens, make a better model. And section 10 told us where the parameters pool — in the MLPs,
   the banks of key–value memories, the questions and the votes. So the obvious way to a better
   model is fatter MLPs, and it works, and it has an equally obvious problem: in the dense
-  transformer we built, <strong>every parameter is exercised for every token</strong>. Each
+  transformer we built, <strong>essentially every parameter is exercised for every
+  token</strong> (the embedding table's one-row-per-token lookup being the lone exception). Each
   position's vector is scored against every feature detector in every layer, at training time
   and inference time alike. Double the memories, double the arithmetic — the two costs are
   welded together.</p>
@@ -72,7 +74,8 @@
                     ┌─────────┐         ┌─────────┐   e2, e4:
                     │ expert 1│         │ expert 3│   never run,
                     └────┬────┘         └────┬────┘   cost nothing
-                         └───── 0.79·() + 0.21·() ──→ + stream
+                         │ ×0.79             │ ×0.21
+                         └───────────────────┴──→ + stream
 <span class="cap">One layer's MoE block. The router is a four-row lookup table; the search
 decides not where to look (attention's job) but which memories to wake.</span></pre>
   <p>Note what kind of object the router is: a dot-product search over learned probes, run

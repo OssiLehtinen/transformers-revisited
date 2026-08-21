@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Transformers from Scratch, Revisited</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/style.css">
 </head>
@@ -237,8 +238,9 @@
   <p>This lookup is exactly the <code>QKᵀ</code> term inside the attention equation:</p>
   <div class="eq">Attention(Q, K, V) = softmax( QKᵀ / √d<sub>k</sub> ) V</div>
   <p>The query <em>Q</em> is the probe — the thing we're searching on behalf of. The keys
-  <em>K</em> are the table being searched. Because the table stores its entries in columns rather
-  than rows, it gets transposed (the ᵀ) before multiplying. Every cell of <code>QKᵀ</code> is a dot
+  <em>K</em> are the table being searched. The table stores one key per row — but a matrix
+  multiply dots the <em>rows</em> of its left operand against the <em>columns</em> of its right,
+  so K gets transposed (the ᵀ) to turn each key into a column for the queries to score against. Every cell of <code>QKᵀ</code> is a dot
   product between one query and one key: one search probe scored against one candidate, precisely
   the match test from section 02. The softmax and the √d<sub>k</sub> are refinements we'll earn
   properly in section 16; the values <em>V</em> are what actually gets retrieved once the search
@@ -359,7 +361,7 @@
   Take each query and key vector, treat its dimensions two at a time as points on a plane, and
   rotate each pair by an angle proportional to the token's position — again with a spectrum of
   frequencies across the pairs, fast hands and slow hands.</p>
-  <svg viewBox="0 0 640 180" role="img" aria-label="RoPE rotation diagram" style="width:100%; max-width:640px; margin:1.4rem 0; display:block;">
+  <div class="svgwrap"><svg viewBox="0 0 640 180" role="img" aria-label="RoPE rotation diagram" style="width:100%; max-width:640px; margin:1.4rem 0; display:block;">
     <g stroke="#2e7a4e" stroke-width="1" fill="none">
       <circle cx="110" cy="90" r="55"/>
       <circle cx="320" cy="90" r="55"/>
@@ -380,7 +382,7 @@
       <text x="320" y="22" text-anchor="middle">rotated by mθ as its</text>
       <text x="530" y="22" text-anchor="middle">position m advances</text>
     </g>
-  </svg>
+  </svg></div>
   <p class="figcap">fig 5 · one two-dimensional slice of a query or key under RoPE. the vector's content sets the hand's length and starting angle; its position winds it forward.</p>
   <p>Why is that clever? Because rotation doesn't change lengths, and the dot product between two
   vectors depends only on their lengths and the angle <em>between</em> them. Rotate a query forward
@@ -395,7 +397,8 @@
   simply subtracts a distance-proportional penalty from every attention score, a blunt "prefer
   nearby" prior that extrapolates gracefully; and some recent models use <em>no</em> positional
   scheme in certain layers at all, since the causal mask alone leaks enough ordering information
-  for the model to reconstruct position. The choice of scheme also turns out to be the crux of
+  for the model to reconstruct position (which quietly amends this chapter's opening "bag" claim —
+  the mask was already breaking perfect shuffle-blindness). The choice of scheme also turns out to be the crux of
   extending models to very long contexts — that door is open:
   <a href="doors/long-context.html">long context</a>.</p>
 </section>
@@ -503,7 +506,7 @@
   thing: it <em>reads</em> from the stream through its input projections, computes something, and
   <em>writes</em> its result back by addition. Nothing else. The stream is the only memory, the
   only bus, the only way any part of the model talks to any other part.</p>
-  <svg viewBox="0 0 640 300" role="img" aria-label="Residual stream diagram" style="width:100%; max-width:640px; margin:1.4rem 0; display:block;">
+  <div class="svgwrap"><svg viewBox="0 0 640 300" role="img" aria-label="Residual stream diagram" style="width:100%; max-width:640px; margin:1.4rem 0; display:block;">
     <line x1="80" y1="20" x2="80" y2="280" stroke="#59e389" stroke-width="3"/>
     <g stroke="#2e7a4e" stroke-width="1.5" fill="none">
       <path d="M 80 60  h 90"/> <path d="M 250 60  h 90 M 340 60 L 80 88" />
@@ -528,7 +531,7 @@
       <text x="80" y="14">tokens in</text>
       <text x="80" y="296">logits out</text>
     </g>
-  </svg>
+  </svg></div>
   <p class="figcap">fig 6 · the residual stream as a bus. every head and MLP is a device that reads the stream and adds a contribution back.</p>
   <p>An objection deserves an answer before we go further: if hundreds of components all
   <em>add</em> their outputs into the same vector, why don't they trample each other into mush?
@@ -659,8 +662,8 @@
   unmasked attention, trained to fill in blanks rather than continue text. That makes it a model
   that <em>reads</em> — producing representations for classification, retrieval, and search — not
   one that generates. <strong>ELMo isn't a transformer at all</strong>; it was a bidirectional LSTM,
-  a lovely piece of the pre-transformer world that the 2017 paper's title ("attention is all you
-  need — recurrence can go") was aimed squarely against. The family portrait, correctly labeled:
+  a lovely late flowering of the recurrent tradition that the 2017 paper's title ("attention is
+  all you need — recurrence can go") was aimed squarely against. The family portrait, correctly labeled:
   encoder-only reads (BERT and its descendants, most embedding models), decoder-only writes (nearly
   everything you've chatted with), encoder–decoder transforms (translation, and tasks shaped like
   it). As for how a raw sequence-continuer becomes something you'd <em>want</em> to chat with —
@@ -675,7 +678,8 @@
   names, code, other languages, emoji — and individual characters lose too: they carry almost no
   meaning for the embedding space to organize, and stretch every text into an enormously long
   sequence for a mechanism whose cost grows quadratically with length.</p>
-  <p>The standing compromise is <strong>byte pair encoding</strong>. Start from raw bytes — not
+  <p>The standing compromise is <strong>byte pair encoding</strong>, in its modern byte-level
+  form. Start from raw bytes — not
   characters, bytes, so that every possible string is representable and no input is ever truly
   out-of-vocabulary. Scan a large corpus; find the most frequent adjacent pair of units; merge it
   into a new unit; repeat until the vocabulary reaches a chosen size. Frequent words end up as

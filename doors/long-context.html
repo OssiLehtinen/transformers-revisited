@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Door 03: Long Context — Transformers from Scratch, Revisited</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/style.css">
 </head>
@@ -56,7 +57,7 @@
   about <strong>63,000 tokens</strong> to come around once. That spread was the design: second
   hands to separate neighbors, hour hands to separate chapters.</p>
   <p>Now train on 8k-token documents and take inventory of what each hand experienced:</p>
-  <svg viewBox="0 0 640 190" role="img" aria-label="Fast hands sweep every angle during training; slow hands only a small arc; beyond the training length lie angles never seen" style="width:100%; max-width:640px; margin:1.4rem 0; display:block;">
+  <div class="svgwrap"><svg viewBox="0 0 640 190" role="img" aria-label="Fast hands sweep every angle during training; slow hands only a small arc; beyond the training length lie angles never seen" style="width:100%; max-width:640px; margin:1.4rem 0; display:block;">
     <g stroke="#2e7a4e" stroke-width="1" fill="none">
       <circle cx="110" cy="90" r="55"/>
       <circle cx="320" cy="90" r="55"/>
@@ -82,16 +83,16 @@
       <text x="320" y="36" text-anchor="middle">the rest is terra incognita</text>
       <text x="530" y="36" text-anchor="middle">example ever produced</text>
     </g>
-  </svg>
-  <p class="figcap">fig 1 · the training inventory of three clock hands. highlighted arcs are
+  </svg></div>
+  <p class="figcap">The training inventory of three clock hands: highlighted arcs are the
   angles actually visited during training; the dashed hand asks for one that wasn't.</p>
-  <p>The fast hands wrapped around thousands of times — every angle on their dials appeared in
-  training, so no position will ever surprise them. But the slowest hand, with its 63k-token
+  <p>The fastest hands wrapped around a thousand times and more — every angle on their dials
+  appeared in training, so no position will ever surprise them. But the slowest hand, with its 63k-token
   period, crawled through a mere 46° of its dial. The model's learned probes — every "match this,
   but prefer recent instances" behavior it acquired — were fit to key-query angle combinations
   drawn from that thin arc. Position 30,000 puts the slow hands somewhere they have literally
-  never pointed. The dot products come back with values outside anything the softmax's learned
-  temperature expects; scores that should be gentle preferences become lurching noise; and the
+  never pointed. The dot products come back with values outside anything the model's learned
+  probes were calibrated for; scores that should be gentle preferences become lurching noise; and the
   next-token distribution goes to pieces. The model didn't learn "position" in the abstract. It
   learned behavior on the angles it saw.</p>
   <p>Framed that way, the fix suggests itself. We can't quickly teach the model new angles —
@@ -106,14 +107,14 @@
   trained at 8k out to 32k, divide every position index by 4 before computing the rotations.
   Token 32,000 now claims to sit at position 8,000; every hand stays within the arc it swept
   during training; nothing is ever out of distribution.</p>
-  <pre class="fig">real positions:      0 &hellip;&hellip;&hellip;&hellip;&hellip;&hellip;&hellip;&hellip;&hellip;&hellip;&hellip;&hellip; 32,000
-                      ↓        divide by 4        ↓
-angles fed to RoPE:  0 ………… 8,000   ← the swept arc, reused
+  <pre class="fig">real positions:      0 ………………………… 32,000
+                     ↓  divide by 4  ↓
+angles fed to RoPE:  0 ………………………… 8,000   ← the swept arc, reused
 <span class="cap">Interpolation: compress the novel into the stretch of dial the model knows.
 Nothing is extrapolated; everything is crowded.</span></pre>
   <p>It works — with a short fine-tune to let the model acclimatize, a few thousand steps rather
   than a retraining. But listen to what it does to the fast hands. The second hand used to
-  advance a quarter-turn per token; now it advances a sixteenth. Adjacent tokens, which the model
+  advance about a sixth of a turn per token; now it advances a twenty-fifth. Adjacent tokens, which the model
   told apart by crisp, well-separated angles, now huddle four times closer together on every
   dial. Local resolution — exactly the thing the fast hands existed to provide — gets blurred, and
   it shows up as a real (if modest) hit on ordinary short-context tasks. We rewound the hour
@@ -157,10 +158,10 @@ Nothing is extrapolated; everything is crowded.</span></pre>
   <p>The workhorse is <strong>sliding-window attention</strong>: each position attends only to
   the last w tokens — the causal mask's triangle trimmed to a diagonal band. This looks like
   giving up on long range entirely, but stack the layers and watch the information travel:</p>
-  <pre class="fig">layer 3:                        ▓ ← sees t−3w &hellip; t, via two hops
+  <pre class="fig">layer 3:                        ▓ ← sees t−3w &hellip; t, via three window-reads
 layer 2:              ▓▓▓▓▓▓▓▓▓▓▓
 layer 1:    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-tokens:   &hellip;──────────────────────t
+tokens:   &hellip;─────────────────────t
 <span class="cap">A window of w per layer, but the residual stream carries what layer 1 gathered
 into layer 2's window: reach compounds by ~w per layer, like receptive fields in a CNN.</span></pre>
   <p>Each token's slot in the residual stream summarizes its neighborhood; the next layer's
