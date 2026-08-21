@@ -150,13 +150,15 @@
   nav.toc .num { color: var(--phosphor-dim); margin-right: 0.5em; }
   nav.toc a.active { color: var(--phosphor); }
   nav.toc a.active .num { color: var(--phosphor); }
-  /* Wide screens: the TOC becomes a fixed sidebar left of the text column. */
-  @media (min-width: 1280px) {
+  /* Wide screens: the TOC becomes a fixed sidebar left of the text column.
+     The column stays centered when there's room, otherwise shifts right to clear the sidebar. */
+  @media (min-width: 64rem) {
+    main { margin-left: max(17.5rem, calc(50vw - 22rem)); }
     nav.toc {
       position: fixed;
       top: 50%;
       transform: translateY(-50%);
-      left: calc(50vw - 38.5rem);
+      left: max(1rem, calc(50vw - 38.5rem));
       width: 15rem;
       max-height: calc(100vh - 3rem);
       overflow-y: auto;
