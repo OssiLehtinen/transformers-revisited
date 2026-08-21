@@ -269,7 +269,8 @@
   writing out predictable contributions. It's also where most of a transformer's parameters live:
   the MLP's hidden width is typically several times the model width, and across a whole model the
   MLPs hold roughly two-thirds of the weights. Attention decides where to look; the MLP does most
-  of the remembering.</p>
+  of the remembering. That lopsided ledger is also a lever, and the door that pulls it is open:
+  <a href="doors/mixture-of-experts.html">mixture of experts</a>.</p>
   <p>One honest confession, inherited from the original essay. Describing transformers as a
   "selective second order model with skips" was always a simplification, and here's exactly where
   it leaks: a learned feature detector is under no obligation to detect a word <em>pair</em>. It
@@ -718,9 +719,9 @@
     windows, sparse patterns — that soften the quadratic wall. Section 13 is the prerequisite.</p>
   </div>
 
-  <div class="stub">
-    <span class="tag">door 04 · sign only</span>
-    <h3>Mixture of experts</h3>
+  <div class="stub open">
+    <span class="tag">door 04 · open</span>
+    <h3><a href="doors/mixture-of-experts.html">Mixture of experts</a></h3>
     <p>Since the MLPs hold most of the parameters, replace each one with a panel of expert MLPs and
     a tiny router that sends each token to a couple of them. Total parameters balloon; compute per
     token doesn't. Most frontier models are now sparse in this sense.</p>

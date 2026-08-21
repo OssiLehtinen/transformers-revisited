@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Door 04: Mixture of Experts — Transformers from Scratch, Revisited</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+
+<header class="site">
+  <p class="eyebrow"><a href="../index.html" style="color:inherit; text-decoration:none;">&larr; transformers from scratch, revisited</a> · door 04</p>
+  <h1>Mixture of experts:<br>hire more, consult few</h1>
+  <p style="color:var(--ink-dim); font-family:'IBM Plex Mono',monospace; font-size:0.9rem;">
+    the parameters balloon; the meter barely moves
+  </p>
+  <p style="margin-top:1.4rem;">This door opens off <a href="../index.html#mlp">section 10</a>,
+  and it pulls on the lopsided fact reported there: the MLPs hold roughly two-thirds of a
+  transformer's parameters — they are where the remembering lives. Behind this door, that
+  concentration becomes a lever. You'll want section 10's picture of the MLP as
+  questions-then-votes, <a href="../index.html#residual-stream">section 17</a>'s picture of the
+  model as a wide bank of workers on one bus, and — when the bill arrives — the corridor's
+  running currency exchange between arithmetic and bytes, quoted behind
+  <a href="kv-cache.html">door 01</a>. The trick itself fits in a sentence: keep many MLPs where
+  the blueprint shows one, and send each token to only a couple of them. The rest of the door is
+  why that works, what it costs, and what the word "expert" is doing in the name.</p>
+</header>
+
+<section id="idle-memories">
+  <h2><span class="num">01</span>Memories that mostly sit idle</h2>
+  <p>Everything we know about scaling says the same thing: more parameters, trained on more
+  tokens, make a better model. And section 10 told us where the parameters pool — in the MLPs,
+  the banks of key–value memories, the questions and the votes. So the obvious way to a better
+  model is fatter MLPs, and it works, and it has an equally obvious problem: in the dense
+  transformer we built, <strong>every parameter is exercised for every token</strong>. Each
+  position's vector is scored against every feature detector in every layer, at training time
+  and inference time alike. Double the memories, double the arithmetic — the two costs are
+  welded together.</p>
+  <p>But watch those memories at work and the welding starts to look silly. The detector for a
+  Python <code>def</code> statement's rhythm contributes nothing to a French cooking blog. The
+  features that matter for legal boilerplate sit idle through a physics derivation. Whatever a
+  token needs from the MLP, it plainly doesn't need <em>all</em> of it — the questions worth
+  asking of any one token are a sliver of the questions the model knows how to ask. The
+  nonlinearity already says as much: most detectors, most of the time, fire at zero and
+  contribute nothing but the arithmetic it took to check. A big model's knowledge is consulted
+  sparsely. Its <em>cost</em>, in the dense design, is paid densely.</p>
+  <p>So the ambition writes itself: separate the two meters. Grow the stock of memories without
+  growing the per-token bill. What's needed is a mechanism that looks at a token and decides
+  <em>which</em> sliver of the memory bank is worth waking up — and we happen to own a
+  differentiable device for exactly that decision.</p>
+</section>
+
+<section id="router">
+  <h2><span class="num">02</span>A panel of experts and a tiny router</h2>
+  <p>Here is the whole mechanism. Where the blueprint shows one MLP per layer, install
+  <strong>E</strong> of them — a panel of so-called <strong>experts</strong>, each a full
+  questions-and-votes MLP of its own. In front of the panel, add a <strong>router</strong>: a
+  single tiny matrix whose E rows are probes, one per expert. A token's vector arrives from the
+  stream; the router dots it against each probe — the same match-scoring that has powered every
+  search in this essay — softmaxes the scores into preferences, and keeps only the top k, with
+  k as small as 1 or 2. Only those experts run. Their outputs are blended, weighted by the
+  router's preferences, and written back to the stream:</p>
+  <div class="eq">out = Σ<sub>i ∈ top-k</sub> &nbsp;g<sub>i</sub> · Expert<sub>i</sub>(x),
+  &nbsp;&nbsp; g = softmax(router scores)</div>
+  <pre class="fig">token x ──→ router: [ e1: 0.71  e2: 0.03  e3: 0.19  e4: 0.07 ]
+                         │                   │
+                       top-2, renormalized: e1 0.79 · e3 0.21
+                         ▼                   ▼
+                    ┌─────────┐         ┌─────────┐   e2, e4:
+                    │ expert 1│         │ expert 3│   never run,
+                    └────┬────┘         └────┬────┘   cost nothing
+                         └───── 0.79·() + 0.21·() ──→ + stream
+<span class="cap">One layer's MoE block. The router is a four-row lookup table; the search
+decides not where to look (attention's job) but which memories to wake.</span></pre>
+  <p>Note what kind of object the router is: a dot-product search over learned probes, run
+  per token, per layer — attention's core move, pointed at a new question. Attention asks
+  <em>which positions</em> matter; the router asks <em>which specialists</em> do. And because
+  the blend weights come out of a softmax, the choice is (mostly) trainable: gradients flow
+  through the weights g<sub>i</sub> to the router's probes, teaching it to send tokens where
+  they're best served. There's an honesty note hiding in that "mostly" — engineering reality #2
+  demands differentiability, and the hard top-k cut is <em>not</em> differentiable. No gradient
+  ever tells expert 2 what it would have done with the token it didn't get. Training therefore
+  only refines choices among experts that get sampled into use — which is why the whole scheme
+  needs the babysitting described in section 04, and why the elegant summary "it's just a
+  learned dispatch" has a small asterisk welded to it.</p>
+</section>
+
+<section id="accounting">
+  <h2><span class="num">03</span>The accounting: two meters, finally separate</h2>
+  <p>Now read the meters. With E experts and top-k routing, the layer's stock of parameters —
+  its memories — grows by a factor of E. The per-token arithmetic grows only by k (the router
+  itself is a rounding error: one E-row matmul against MLPs thousands of times larger). The two
+  costs that the dense design welded together now move independently, and real models put a
+  wide gap between them:</p>
+  <pre class="fig">                          total params    active per token
+Mixtral 8×7B  (top-2 of 8)      47 B            13 B
+DeepSeek-V3  (top-8 of 256,     671 B           37 B
+              + 1 shared expert)
+<span class="cap">The two meters, in the wild. "Active" is what one token's forward pass
+touches; the rest of the parameters sit in memory, waiting for a token
+that concerns them.</span></pre>
+  <p>This is what "sparse" means in the phrase <em>sparse model</em>: not sparse matrices, but
+  conditional computation — a vast model of which each token runs a narrow slice. The slice is
+  chosen afresh at every layer, so across 60 layers a token threads its own path through the
+  panels, and two tokens in the same sentence may share almost none of it.</p>
+  <p>Spot the corridor's currency exchange, running in reverse. Doors 01 and 02 spent cheap
+  arithmetic to avoid expensive bytes. MoE spends bytes to avoid arithmetic: all 671 billion
+  parameters must sit resident in (expensive, distributed) memory so that any token can wake
+  any expert, but each token's compute — the thing that scales with every single one of the
+  trillions of tokens in a training run — stays modest. At training scale that trade is
+  overwhelmingly right, which is why, behind various curtains of corporate discretion,
+  essentially every frontier lab now ships models that are sparse in this sense. The sign on
+  this door said most frontier models live behind it; they do.</p>
+</section>
+
+<section id="balancing">
+  <h2><span class="num">04</span>Keeping the panel honest</h2>
+  <p>Left to itself, the elegant mechanism falls over, and it falls in an instructive
+  direction. Early in training, some expert is — by pure initialization luck — slightly better
+  than its peers at the average token. The router, doing its job, sends it slightly more
+  traffic. More traffic means more gradient, means it improves faster, means the router likes
+  it even more. The feedback loop runs away, and you end with one exhausted generalist doing
+  all the work while the rest of the panel, never chosen and therefore never taught
+  (remember the asterisk from section 02: no gradient reaches the unchosen), atrophies into
+  expensive decoration. <strong>Router collapse</strong> is the failure mode; rich-get-richer
+  is its mechanism.</p>
+  <p>The standard cure is refreshingly unsubtle: add a small <strong>load-balancing</strong>
+  term to the loss that rewards spreading traffic evenly across the panel, and let it argue
+  with the router's preferences. Tuning that argument is a genuine tension — balance perfectly
+  and you've abolished specialization, the entire point; balance too weakly and you collapse —
+  and the engineering around it (capacity limits per expert, with overflow tokens skipping the
+  MLP entirely via the residual path in early systems; auxiliary-loss-free schemes that
+  instead quietly nudge a per-expert bias, in recent ones) is a large share of what separates
+  MoE recipes that train from MoE recipes that make headlines about instability. None of it
+  changes the mental model; all of it decides whether the mental model survives contact with
+  gradient descent.</p>
+</section>
+
+<section id="what-expert-means">
+  <h2><span class="num">05</span>What "expert" doesn't mean</h2>
+  <p>The name invites a picture: a French expert, a code expert, a chemistry expert, each
+  presiding over a topic. The honesty note is that when researchers went looking for that
+  picture in trained routers, they mostly didn't find it. Routing correlates with shallow,
+  token-level structure — punctuation, indentation, common function words, syntactic position —
+  far more than with human subject matter, and a given expert's caseload reads less like a
+  specialty and more like a bureaucrat's inbox: coherent to the filing system, illegible to
+  visitors. The router's categories are its own, discovered because they made the loss go
+  down, and nothing asked them to align with a library's. (After section 17's superposition
+  caveat, this should feel familiar: the model's internal taxonomy rarely matches ours.
+  The recent trend even leans into it — many small experts, finely sliced, with a
+  <em>shared</em> expert always in the blend to hold the load-bearing generalities — a design
+  that has given up entirely on experts being legible and just wants the sparsity.)</p>
+  <p>The residual-stream picture from section 17 absorbs all of this without strain — and it's
+  the best way to file MoE mentally. The model was already a wide bank of workers wired to one
+  bus, most of them effectively idle for any given token (that's what a detector firing at
+  zero is). MoE makes the idleness <em>architectural</em>: the bank of workers per stop gets
+  enormously wider, an explicit dispatcher chooses the few who clock in, and the unchosen cost
+  nothing instead of costing a wasted check. The crowd got bigger; the meeting stayed small.
+  Why do this to the MLPs and not to attention? Because the lever only pays where the
+  parameters pool — and that fact, from section 10, is the one this whole door stands on.</p>
+</section>
+
+<section id="economics">
+  <h2><span class="num">06</span>The economics, and the next door</h2>
+  <p>The serving story has the same two-sided character as everything else in this corridor.
+  For a provider running huge batches across racks of accelerators, MoE is a gift: the experts
+  are sharded across devices (<strong>expert parallelism</strong>), every device stays busy
+  because a big enough batch contains tokens for everyone, and each user's token enjoys the
+  quality of a 671B-parameter model at the arithmetic price of a 37B one. For a single user on
+  a single machine, the same design is a tax: all the parameters must fit in local memory —
+  door 01's scarcest resource — while the compute they enable goes mostly unused at batch size
+  one. Sparse models are, by construction, models that <em>pool</em> best. It's the rare
+  architectural choice whose goodness depends on how many of you there are.</p>
+  <p>And with that, the machine's blueprint is as scaled-up as this corridor takes it: cached,
+  tiled, stretched, and now sparse — every door so far about making the same next-token
+  predictor bigger, longer, or cheaper. The remaining question is different in kind: how a
+  text-continuation machine becomes something you can <em>talk to</em>. That's post-training —
+  instruction tuning and RLHF — and its door, the next one down, is still
+  <a href="../index.html#off-ramps">marked with a sign</a>.</p>
+</section>
+
+<footer>
+  <p><a href="../index.html">&larr; back to the core essay</a> · CC0 · contributions are additive</p>
+</footer>
+
+</main>
+</body>
+</html>
