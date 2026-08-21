@@ -314,7 +314,10 @@
   example teaches a whole neighborhood.</p>
   <p>The embedding matrix is learned along with everything else, and the number of dimensions is a
   dial trading capacity for cost. From here on, everything happens to these dense vectors; the
-  one-hot representation appears only at the very entrance and exit of the model. And note what
+  one-hot representation appears only at the very entrance and exit of the model. (That's a
+  bigger deal than it looks: anything else that can be turned into dense vectors — image
+  patches, audio frames — can enter by the same gate, and that door is open:
+  <a href="doors/beyond-text.html">beyond text</a>.) And note what
   this does to our search framing: dot-product matching in embedding space is no longer an exact
   identity test but a <em>semantic</em> one. The probe that matches <em>battery</em> now also
   half-matches <em>charger</em>. The search got fuzzy, on purpose.</p>
@@ -738,9 +741,9 @@
     objective, very different behavior.</p>
   </div>
 
-  <div class="stub">
-    <span class="tag">door 06 · sign only</span>
-    <h3>Beyond text, and beyond attention</h3>
+  <div class="stub open">
+    <span class="tag">door 06 · open</span>
+    <h3><a href="doors/beyond-text.html">Beyond text, and beyond attention</a></h3>
     <p>Images, audio, and other modalities enter the same stream as sequences of dense vectors —
     the trick anticipated in the original essay's audio section. Meanwhile state-space models and
     hybrids ask how much of attention's job recurrence can take back. The residual-stream picture

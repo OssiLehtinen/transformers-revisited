@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Door 06: Beyond Text, Beyond Attention — Transformers from Scratch, Revisited</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+
+<header class="site">
+  <p class="eyebrow"><a href="../index.html" style="color:inherit; text-decoration:none;">&larr; transformers from scratch, revisited</a> · door 06</p>
+  <h1>Beyond text,<br>and beyond attention</h1>
+  <p style="color:var(--ink-dim); font-family:'IBM Plex Mono',monospace; font-size:0.9rem;">
+    the stream doesn't know it's reading
+  </p>
+  <p style="margin-top:1.4rem;">The last door in the corridor opens off
+  <a href="../index.html#embeddings">section 12</a>, on the strength of one sentence there:
+  after the embedding, <em>everything happens to dense vectors</em> — the one-hot symbols
+  appear only at the entrance and the exit. That makes the entrance a border crossing, and
+  borders can be crossed by anything with papers. The first half of this door is how images and
+  audio get their papers — the trick Rohrer's original essay anticipated in its audio example,
+  now the standard architecture of every model that looks at your screenshots. The second half
+  turns around and walks the other way: attention itself, the mechanism this whole essay built
+  toward, has rivals — recurrence, reformed and returned — and the honest question is how much
+  of the job they can take back. Both halves end at the same place:
+  <a href="../index.html#residual-stream">section 17</a>'s residual stream, unbothered.</p>
+</header>
+
+<section id="border-crossing">
+  <h2><span class="num">01</span>The entrance is the only text-specific part</h2>
+  <p>Inventory the machine with border control in mind. The tokenizer
+  (<a href="../index.html#tokenizing">section 21</a>) is about text. The embedding table is
+  indexed by tokens of text. And that's the end of the list: from the first residual stream
+  vector onward, nothing downstream — not the attention searches, not the MLP votes, not the
+  normalization — knows or cares that the [n&nbsp;×&nbsp;d] matrix flowing through it began as
+  words. The stream is a bus for dense vectors of width d, full stop. Section 12 called the
+  embedding a projection from symbol space into a shared geometric space; the load-bearing word
+  was <em>shared</em>.</p>
+  <p>So the recipe for feeding the machine something that isn't text writes itself: don't touch
+  the machine. Build a new entrance — some way of turning your signal into a <em>sequence of
+  d-dimensional vectors</em> — and merge onto the stream. Everything the corridor established
+  (the cache, the tiling, the stretched clocks, the expert panels, the post-training) applies
+  instantly to whatever comes through, because none of it ever mentioned words either.</p>
+</section>
+
+<section id="images">
+  <h2><span class="num">02</span>Images: a sentence of patches</h2>
+  <p>For images, the entrance is almost insultingly simple. Slice the image into a grid of
+  small square patches — 16&nbsp;×&nbsp;16 pixels is traditional — flatten each patch's pixel
+  values into one long vector, and push each through a single learned linear projection
+  (section 12's move, minus the one-hot: a lookup table softened into a linear map) to width d.
+  Read the patches left-to-right, top-to-bottom, like text:</p>
+  <pre class="fig">  ┌────┬────┬────┬────┐
+  │ p1 │ p2 │ p3 │ p4 │     one 16×16 patch = 768 raw numbers
+  ├────┼────┼────┼────┤         │ learned linear projection
+  │ p5 │ p6 │ ...     │         ▼
+  └────┴────┴────┴────┘     one d-dimensional "visual token"
+
+  image  →  [ p1 p2 p3 p4 p5 p6 … ]  →  the same transformer
+<span class="cap">The vision transformer's entrance: an image becomes a sequence of patch
+vectors — a sentence whose words are little squares.</span></pre>
+  <p>That's the <strong>vision transformer</strong> (ViT), and the shock of it in 2020 was
+  everything it declined to include. Computer vision's decades of built-in visual wisdom —
+  convolutions, locality, translation invariance — replaced by: make it a sequence, add a
+  position signal (<a href="../index.html#position">section 13</a>'s chapter, again — in two
+  dimensions now, and modern vision stacks indeed use 2D flavors of RoPE), and let attention
+  learn which patches should search for which. Given enough data, the general machine matched
+  and then passed the specialized ones — the bitterest of lessons, delivered one more time,
+  this time to pixels.</p>
+  <p>A chat model that reads your screenshots is then a plumbing diagram: a vision encoder
+  turns the image into a few hundred visual tokens; a small learned <strong>adapter</strong>
+  projects them into the language model's d and dialect; and they're spliced into the
+  conversation sequence between the text tokens, where the language model attends over them
+  exactly as it attends over words. When you ask "what's wrong with this error message?", the
+  model's probes are running the same dot-product searches over patch vectors and word vectors
+  alike — one stream, mixed citizenship, no separate visual brain.</p>
+</section>
+
+<section id="audio-and-everything">
+  <h2><span class="num">03</span>Audio, and everything else with a sequence in it</h2>
+  <p>Audio was the modality Rohrer's original essay used to introduce the whole subject, and
+  his framing — signal in, sampled and vectorized, sequence out — was this door's idea waiting
+  for its moment. The modern entrance: chop the waveform into short frames, summarize each as
+  a spectral vector (which frequencies, how loudly — a small honest bit of classical signal
+  processing), or increasingly, train a neural <strong>codec</strong> that compresses audio
+  into a vocabulary of discrete tokens, BPE's spiritual cousin
+  (<a href="../index.html#tokenizing">section 21</a>) for sound. Either way: a sequence of
+  vectors, the border crossed, done. Speech recognition, once a cathedral of specialist
+  components — acoustic models, pronunciation dictionaries, language models negotiating over
+  lattices — collapsed into "transcribe" as one long sequence continuation.</p>
+  <p>And the pattern generalizes past the classic modalities: protein sequences, robot action
+  streams, weather grids, mouse-and-keyboard events — the field's default first move for any
+  new domain is now "find the tokens, then bring the transformer." Two honesty notes keep the
+  triumph in proportion. Tokenizing a continuous world is lossy in ways worth remembering —
+  section 21 warned that the model never sees the letters, and a patch grid likewise never
+  quite sees the pixel. And <em>generating</em> in continuous modalities is genuinely split:
+  models that produce images and video as of this writing often pair a transformer backbone
+  with a <strong>diffusion</strong> process — start from noise, iteratively denoise — a
+  different generative recipe that earns a corridor of its own somewhere else. The universal
+  <em>reader</em> is settled fact; the universal <em>writer</em> is still being argued
+  about.</p>
+</section>
+
+<section id="recurrence-returns">
+  <h2><span class="num">04</span>Beyond attention: recurrence, reformed</h2>
+  <p>Now the other direction. This essay's founding villain was recurrence — the 2017 paper's
+  title was a shot at it, and <a href="../index.html#single-head">section 16</a> told the
+  story: attention won because every position could be trained in parallel, while recurrent
+  networks marched token by token. But sit with the corridor's cost ledger — quadratic
+  arithmetic (<a href="flash-attention.html">door 02</a> made it fast, not small), a KV cache
+  that grows without bound and is re-read for every token
+  (<a href="kv-cache.html">door 01</a>'s rent) — and the old idea starts to whisper: a
+  recurrent model carries a <em>fixed-size</em> state. Constant memory. Linear time. No cache
+  rent at all. What if recurrence could be built to <em>train</em> in parallel, the one virtue
+  it lacked?</p>
+  <p>That's the modern <strong>state-space model</strong> family — Mamba is the name that
+  stuck — and one honest cartoon captures both its promise and its price:</p>
+  <pre class="fig">attention:  a growing archive          recurrence:  a fixed-size notebook
+  every past token kept, verbatim;       the past compressed into one
+  any probe may search all of it,        state vector, updated per token;
+  any time.                              what wasn't written down is gone.
+
+  cost: rent forever (door 01)           cost: forgetting, forever
+<span class="cap">The trade at the heart of the rivalry. Attention pays memory for perfect
+recall; recurrence pays recall for constant memory.</span></pre>
+  <p>The reformation that made the notebook competitive is <strong>selectivity</strong>: the
+  state update is gated by the input, so the model <em>chooses</em>, token by token, what to
+  write into its limited notebook and what to let fade — a learned, differentiable act of
+  triage (engineering reality #2, still on duty). With some serious engineering to keep
+  training parallel, these models genuinely deliver: linear-time processing, constant-memory
+  generation, no quadratic wall, no cache ledger. On many tasks they match attention outright.
+  Where they crack is exactly where the cartoon says they must: <em>verbatim recall at
+  range</em> — door 03's needle tests, retrieving a phone number from two hundred pages back —
+  because a fixed-size summary, however cleverly triaged, eventually declines to contain
+  everything. Attention's defining extravagance, keeping every token forever, turns out to be
+  the feature hardest to give up.</p>
+</section>
+
+<section id="hybrids">
+  <h2><span class="num">05</span>The armistice: hybrids</h2>
+  <p>So the field, with uncharacteristic good sense, stopped treating it as a duel. If
+  attention layers are archives and state-space layers are notebooks, a model can staff itself
+  with mostly notebooks and a few archivists: interleave many cheap linear-time layers with a
+  handful of full-attention layers that provide exact recall when a probe truly needs the
+  verbatim past. If that rhymes, it should — it's <a href="long-context.html">door 03</a>'s
+  sliding-window-plus-global-layers mix again, with the local half swapped for something
+  smarter than a window, and the corridor's doors opening onto each other one last time.
+  Hybrids along these lines have shipped in production model families, and the frontier's
+  drift is visible in every architecture note: the expensive, exact, quadratic mechanism
+  reserved as a minority ingredient; the cheap sequence-mixer doing the bulk hauling. How far
+  that ratio can fall — whether attention ends as the salt rather than the meal — is a live
+  question the next revision of this page will answer differently than this one.</p>
+</section>
+
+<section id="the-stream-survives">
+  <h2><span class="num">06</span>The stream survives; the corridor closes</h2>
+  <p>Look at what this door did to the essay's machine, because it's the corridor's whole
+  method in miniature. We swapped the entrance (patches and codecs for tokenizers), and the
+  stream didn't notice. The rivals swap the sequence-mixer (notebooks for archives), and the
+  stream doesn't notice that either: a state-space layer, exactly like an attention head,
+  exactly like an MLP, is a worker that <em>reads the residual stream, computes, and writes
+  back by addition</em>. Section 17's picture — one wide additive bus, a crowd of workers, a
+  thin discipline of read/compute/write — is the invariant every renovation in this corridor
+  preserved, and the safest bet in a field with few safe bets is that whatever architecture
+  headlines the next decade will preserve it too. The residual stream is less one design
+  choice among many than the discovery of a good way for learned components to share a
+  workspace; the components, this door suggests, are negotiable.</p>
+  <p>And that closes the corridor — six doors, all open. The essay built one machine out of
+  counting and dot products; the doors watched that machine get cached, tiled, stretched,
+  sparsified, civilized, and finally generalized until neither its input nor its centerpiece
+  was sacred. If a seventh door ever appears in <a href="../index.html#off-ramps">section
+  22</a> — the diffusion corridor is right there, unexcavated — it will follow the same house
+  rules: no black boxes, honesty notes attached, contributions additive.</p>
+</section>
+
+<footer>
+  <p><a href="../index.html">&larr; back to the core essay</a> · CC0 · contributions are additive</p>
+</footer>
+
+</main>
+</body>
+</html>
