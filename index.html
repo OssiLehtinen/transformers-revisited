@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transformers from Scratch, Revisited</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<main>
+
+<header class="site">
+  <p class="eyebrow">e2eml lineage · rebuilt &amp; brought current, 2026</p>
+  <h1>Transformers from Scratch,<br>Revisited</h1>
+  <p style="color:var(--ink-dim); font-family:'IBM Plex Mono',monospace; font-size:0.9rem;">
+    counting → dot products → lookups → attention → a modern decoder-only stack
+  </p>
+  <p style="margin-top:1.4rem;">This is a rebuild of Brandon Rohrer's 2021 essay
+  <a href="https://brandonrohrer.com/transformers.html"><em>Transformers from Scratch</em></a>, which he generously
+  released under CC0. The original's great idea — that you can reconstruct a transformer starting from
+  nothing but counting and arithmetic, with the dot product as a search operation at the center of it all —
+  is preserved intact. What's changed: a handful of factual errors are fixed (there's a
+  <a href="#ledger">ledger</a> at the end), the architecture described is the decoder-only stack that
+  powers today's language models, positional encoding gets the full chapter it deserved (including RoPE),
+  and residual connections get reframed as the <em>residual stream</em> — a perspective that quietly
+  flattens the whole tower of layers into something closer to a wide bank of parallel workers. Almost.</p>
+  <p>The promise is the same as the original's: no prerequisites beyond arithmetic. We'll add each
+  concept one at a time, as it's needed, and by the end there will be no mysterious black boxes left —
+  just a few clearly marked doors we chose not to open, with signs saying what's behind them.</p>
+
+  <nav class="toc" aria-label="Contents">
+    <a href="#one-hot"><span class="num">01</span>One-hot encoding</a><br>
+    <a href="#dot-product"><span class="num">02</span>Dot product as search</a><br>
+    <a href="#lookup"><span class="num">03</span>Matrix multiplication as lookup</a><br>
+    <a href="#first-order"><span class="num">04</span>First order sequence model</a><br>
+    <a href="#second-order"><span class="num">05</span>Second order model</a><br>
+    <a href="#skips"><span class="num">06</span>Second order with skips</a><br>
+    <a href="#masking"><span class="num">07</span>Masking is attention</a><br>
+    <a href="#rest-stop"><span class="num">08</span>Rest stop and an off ramp</a><br>
+    <a href="#attention-matmul"><span class="num">09</span>Attention as matrix multiplication</a><br>
+    <a href="#mlp"><span class="num">10</span>The MLP: features and votes</a><br>
+    <a href="#completion"><span class="num">11</span>Sequence completion</a><br>
+    <a href="#embeddings"><span class="num">12</span>Embeddings</a><br>
+    <a href="#position"><span class="num">13</span>Position: wiggles to rotations</a><br>
+    <a href="#unembedding"><span class="num">14</span>Unembedding and softmax</a><br>
+    <a href="#multihead"><span class="num">15</span>Multi-head attention</a><br>
+    <a href="#single-head"><span class="num">16</span>Single head, revisited</a><br>
+    <a href="#residual-stream"><span class="num">17</span>The residual stream</a><br>
+    <a href="#normalization"><span class="num">18</span>Normalization</a><br>
+    <a href="#layers"><span class="num">19</span>Layers, revisited</a><br>
+    <a href="#decoder-only"><span class="num">20</span>Decoder-only by default</a><br>
+    <a href="#tokenizing"><span class="num">21</span>Tokenizing and BPE</a><br>
+    <a href="#off-ramps"><span class="num">22</span>Doors we didn't open</a><br>
+    <a href="#ledger"><span class="num">23</span>Corrections ledger</a><br>
+    <a href="#resources"><span class="num">24</span>Resources and credits</a>
+  </nav>
+</header>
+
+<section id="one-hot">
+  <h2><span class="num">01</span>One-hot encoding</h2>
+  <p>In the beginning were the words. Our first job is to turn them into numbers so we can do math
+  on them.</p>
+  <p>Imagine we're building a computer that responds to typed commands, and our whole language is
+  three words: <em>files</em>, <em>find</em>, <em>my</em>. We could just number them —
+  <em>files</em>&nbsp;=&nbsp;1, <em>find</em>&nbsp;=&nbsp;2, <em>my</em>&nbsp;=&nbsp;3 — and represent
+  "find my files" as [2,&nbsp;3,&nbsp;1]. That works, but there's a format computers like even better:
+  <strong>one-hot encoding</strong>. Each word becomes a vector as long as the vocabulary, all zeros
+  except for a single one in that word's slot.</p>
+<pre class="fig">
+             files  find   my
+  files   [    1     0     0  ]
+  find    [    0     1     0  ]
+  my      [    0     0     1  ]
+<span class="cap">fig 1 · a one-hot encoded vocabulary. one row per word, one column per slot.</span></pre>
+  <p>A sentence becomes a stack of these vectors — a two-dimensional array. I'll use "vector" and
+  "one-dimensional array" interchangeably from here on, and likewise "matrix" and "two-dimensional
+  array".</p>
+  <p>This looks like a wasteful way to store three words, and it is. Its value shows up in the next
+  two sections, where it turns arithmetic into something that behaves like retrieval.</p>
+</section>
+
+<section id="dot-product">
+  <h2><span class="num">02</span>The dot product is a search operation</h2>
+  <p>To take the <strong>dot product</strong> of two vectors, multiply their corresponding elements
+  and add up the results. That's the whole definition. It also goes by scarier names — inner
+  product, scalar product — but it's just multiply-and-add.</p>
+  <p>Here is the observation the entire transformer rests on. The dot product of a one-hot vector
+  with itself is 1. The dot product of a one-hot vector with any <em>different</em> one-hot vector
+  is 0 — the ones never line up.</p>
+<pre class="fig">
+  match:      [0 1 0] · [0 1 0]  =  0·0 + 1·1 + 0·0  =  1
+  no match:   [0 1 0] · [1 0 0]  =  0·1 + 1·0 + 0·0  =  0
+<span class="cap">fig 2 · the dot product as an exact-match test.</span></pre>
+  <p>So a dot product against a one-hot vector answers a question: <em>is this the word I'm looking
+  for?</em> It's a search probe. And it generalizes gracefully. If instead of a crisp one-hot vector
+  you have a blend — a vector of weights over several words — the dot product with a one-hot probe
+  reads out <em>how strongly</em> that word is present. The answer stops being yes/no and becomes
+  a relevance score.</p>
+  <p>Hold onto that framing. Everything that follows — lookup tables, Markov models, and eventually
+  attention itself — is a matter of doing this search at scale, and then making the search terms
+  <em>learnable</em>.</p>
+</section>
+
+<section id="lookup">
+  <h2><span class="num">03</span>Matrix multiplication as a table lookup</h2>
+  <p>Matrix multiplication is just dot products in bulk: to multiply matrix <em>A</em> by matrix
+  <em>B</em>, take the dot product of every row of <em>A</em> with every column of <em>B</em> and
+  arrange the results in a grid. The number of columns in <em>A</em> has to match the number of rows
+  in <em>B</em>, and the answer has <em>A</em>'s rows and <em>B</em>'s columns.</p>
+  <p>Now combine that with one-hot vectors and something delightful happens. Multiply a one-hot row
+  vector by a matrix <em>B</em>, and the result is exactly one <em>row</em> of <em>B</em> — the row
+  whose index matches the position of the 1.</p>
+<pre class="fig">
+                    ┌ row 0 ┐
+  [0 1 0]    ×      │ row 1 │     =    row 1
+                    └ row 2 ┘
+<span class="cap">fig 3 · a one-hot vector pulls a single row out of a matrix. multiplication acting as retrieval.</span></pre>
+  <p>Multiplying by a one-hot vector is a <strong>table lookup</strong>, spelled as arithmetic. Stack
+  several one-hot vectors into a matrix and you fetch several rows at once, in whatever order the
+  ones dictate. This trick — using multiplication to pull particular rows out of a table — is the
+  core of how transformers work. It matters because arithmetic, unlike an <code>if</code> statement
+  or a hash table, is <em>differentiable</em>: we can nudge it, measure how the output changes, and
+  therefore learn it. We've smuggled database retrieval into calculus territory.</p>
+</section>
+
+<section id="first-order">
+  <h2><span class="num">04</span>First order sequence model</h2>
+  <p>Back to language. Suppose our command computer only ever hears three sentences:</p>
+  <p style="font-family:'IBM Plex Mono',monospace; font-size:0.92rem; color:#a8e6bd;">
+  show me my directories please.<br>show me my files please.<br>show me my photos please.</p>
+  <p>The vocabulary is seven words. A natural way to model the sequences is a <strong>transition
+  model</strong>: for each word, what's likely to come next? If users ask for photos half the time,
+  files 30% of the time, and directories the rest, then after <em>my</em> the next-word
+  probabilities are 0.5, 0.3, 0.2, and everywhere else the next word is certain. A model where the
+  prediction depends only on the current word is a first order <strong>Markov chain</strong>.</p>
+  <p>Markov chains fit beautifully into a matrix: one row per word, one column per word, each cell
+  holding the probability that the column's word follows the row's word. Each row sums to one.
+  And now our lookup trick earns its keep: to ask "what comes after <em>my</em>?", multiply the
+  one-hot vector for <em>my</em> by the transition matrix. Out comes the row for <em>my</em> —
+  a probability distribution over next words. Prediction is retrieval.</p>
+<pre class="fig">
+              dirs  files   me    my  photos please show
+  my       [  .2     .3     0     0    .5      0     0  ]
+<span class="cap">fig 4 · one row of the transition matrix: the distribution over what follows "my".</span></pre>
+</section>
+
+<section id="second-order">
+  <h2><span class="num">05</span>Second order sequence model</h2>
+  <p>Predicting the next word from just the current one is like guessing a tune after hearing a
+  single note. Two notes go a lot further. Consider a model that only ever sees these two
+  sentences, 40/60:</p>
+  <p style="font-family:'IBM Plex Mono',monospace; font-size:0.92rem; color:#a8e6bd;">
+  check whether the battery ran down please.<br>check whether the program ran please.</p>
+  <p>A first order model hits a wall at <em>ran</em>: sometimes <em>down</em> follows, sometimes
+  <em>please</em>, and it can only shrug and quote the base rates. But a model that looks at the two
+  most recent words knows that <em>battery ran</em> is always followed by <em>down</em> and
+  <em>program ran</em> by <em>please</em>. The branch disappears; uncertainty collapses.</p>
+  <p>The price shows up in the bookkeeping. A second order transition matrix needs a row for every
+  <em>pair</em> of words: with a vocabulary of <em>N</em>, that's <em>N</em>² rows. The rows become
+  more confident — more ones, fewer fractions — but the table is exploding.</p>
+</section>
+
+<section id="skips">
+  <h2><span class="num">06</span>Second order sequence model with skips</h2>
+  <p>Now the hard case. Two sentences, equally likely:</p>
+  <p style="font-family:'IBM Plex Mono',monospace; font-size:0.92rem; color:#a8e6bd;">
+  check the program log and find out whether it ran please.<br>
+  check the battery log and find out whether it ran down please.</p>
+  <p>To pick the word after <em>ran</em>, you need to remember a word from <em>eight positions
+  back</em>. An eighth order model would need <em>N</em>⁸ rows — absurd for any real vocabulary.
+  So we cheat, productively. Keep the model second order, but instead of only pairing <em>ran</em>
+  with its immediate predecessor, pair it with <em>every</em> word that came before it, one pair at
+  a time: (<em>check, ran</em>), (<em>the, ran</em>), (<em>battery, ran</em>), and so on. Each pair
+  is a <strong>feature</strong>, and each feature gets a row of <strong>votes</strong> over next
+  words. To predict, activate every feature the sentence contains, sum up their vote rows, and take
+  the winner.</p>
+  <p>This still captures a <strong>long range dependency</strong> — the (<em>battery, ran</em>)
+  feature votes hard for <em>down</em>, the (<em>program, ran</em>) feature votes hard for
+  <em>please</em> — while throwing away most word-order information about the intervening words.
+  What remains is surprisingly powerful. It's also, note, no longer a Markov model: rows stopped
+  being states and became features; cells stopped being probabilities and became votes.</p>
+  <p>There's a problem, though. Almost all of those features are useless. Words like <em>check</em>
+  and <em>log</em> appear in both sentences, so their pairs with <em>ran</em> vote 50/50 and just
+  add noise. Summed up, the informative signal from <em>battery</em> or <em>program</em> wins by a
+  sliver — 5 votes to 4. In a real, messy language model, a margin like that would drown in
+  statistical noise.</p>
+</section>
+
+<section id="masking">
+  <h2><span class="num">07</span>Masking, or: selectively ignoring things is attention</h2>
+  <p>The fix is to stop listening to the uninformative features. Build a <strong>mask</strong>: a
+  vector with ones at the positions of features worth keeping — (<em>battery, ran</em>) and
+  (<em>program, ran</em>) — and zeros everywhere else. Multiply it element-by-element against the
+  vector of active features, and the noise vanishes before the votes are ever summed. The 5-to-4
+  margin becomes 1-to-0. What was a 25% edge becomes certainty.</p>
+  <p>This act of selective ignoring — dynamically choosing which parts of the past to consult and
+  which to suppress — is the <strong>attention</strong> in the title of the 2017 paper
+  <em>Attention Is All You Need</em>. What we've built so far is a conceptual approximation of it:
+  the real mechanism is soft rather than binary, operates in a compressed space rather than on raw
+  words, and is learned rather than hand-picked. We'll close each of those gaps in turn. But the
+  essential move — <em>a search over the past, deciding what's relevant to right now</em> — is
+  already here, and it's made of nothing but the dot-product lookups from sections 02 and 03.</p>
+</section>
+
+<section id="rest-stop">
+  <h2><span class="num">08</span>Rest stop and an off ramp</h2>
+  <p>Congratulations on making it this far — and you're free to stop here. The
+  selective-second-order-with-skips model is an honest first approximation of what generative
+  language models do: build features that pair the current token with relevant earlier context,
+  suppress the irrelevant ones, and let the survivors vote on what comes next. It's not the
+  complete story, but it's the central thrust of it.</p>
+  <p>Everything from here on closes the gap between that cartoon and the real implementation, and
+  nearly all of it is driven by three engineering realities:</p>
+  <p><strong>1. Computers are shockingly good at matrix multiplication.</strong> An entire hardware
+  industry exists to make it fast. Any computation you can express as matmuls rides the bullet
+  train.</p>
+  <p><strong>2. Every step must be differentiable.</strong> We hand-picked our votes and masks. In
+  practice they're learned by <strong>backpropagation</strong>, which needs to trace how a small
+  change in any parameter changes the loss — so every operation along the way must have a
+  derivative.</p>
+  <p><strong>3. The gradient must be smooth and well-conditioned.</strong> Training only works if
+  small parameter steps produce small, informative changes in loss — no cliffs, no vast plateaus,
+  no canyon floors. A surprising amount of transformer anatomy (normalization, residual
+  connections, the √<em>d</em> in the attention formula) exists purely to keep the gradient
+  landscape pleasant.</p>
+</section>
+<section id="attention-matmul">
+  <h2><span class="num">09</span>Attention as matrix multiplication</h2>
+  <p>So far the mask fell out of the sky: we looked at the sentences and picked it by hand. A real
+  model has to <em>find</em> the right mask on its own, for every token, in every context — and to
+  be trainable, it has to do so with differentiable operations. We already own the perfect tool.
+  Stack the mask vectors for every possible word of interest into a table, and use our
+  one-hot-lookup trick to pull out the relevant one.</p>
+  <p>This lookup is exactly the <code>QKᵀ</code> term inside the attention equation:</p>
+  <div class="eq">Attention(Q, K, V) = softmax( QKᵀ / √d<sub>k</sub> ) V</div>
+  <p>The query <em>Q</em> is the probe — the thing we're searching on behalf of. The keys
+  <em>K</em> are the table being searched. Because the table stores its entries in columns rather
+  than rows, it gets transposed (the ᵀ) before multiplying. Every cell of <code>QKᵀ</code> is a dot
+  product between one query and one key: one search probe scored against one candidate, precisely
+  the match test from section 02. The softmax and the √d<sub>k</sub> are refinements we'll earn
+  properly in section 16; the values <em>V</em> are what actually gets retrieved once the search
+  decides where to look. For now the point is this: <strong>attention is a differentiable lookup
+  table</strong>, and the lookup is a batch of dot-product searches.</p>
+</section>
+
+<section id="mlp">
+  <h2><span class="num">10</span>The MLP: building features and counting votes</h2>
+  <p>The other thing we hand-waved was the feature table itself. Attention can gather
+  <em>battery</em> and <em>ran</em> into the same place, but something still has to construct the
+  combined feature "<em>battery</em> occurred, and <em>ran</em> is current" and map it to votes.
+  That something is a small two-layer neural network — the block the paper calls the feed-forward
+  network and everyone now calls the <strong>MLP</strong>.</p>
+  <p>It works in two steps, and both are our familiar friends. The first matrix multiplication
+  scores the incoming vector against a large bank of learned probes — each row of the first weight
+  matrix is a feature detector, asking its own dot-product question of the input. A nonlinearity
+  then zeroes out the detectors that didn't fire. (The original used
+  <strong>ReLU</strong>, which simply replaces negatives with zero. Modern models mostly use a
+  smoother gated variant called <strong>SwiGLU</strong>, where one projection multiplicatively
+  gates another; the reason is empirical — it trains a bit better — and the mental model is
+  unchanged.) The second matrix multiplication then acts as the transition table: each detected
+  feature contributes its learned row of votes over what to write out.</p>
+  <p>In other words: <strong>the first layer asks questions, the second layer casts votes</strong>.
+  Detect a pattern, look up what it implies. This reading of the MLP as a bank of key–value
+  memories isn't just a teaching cartoon, either — it's how interpretability researchers have since
+  found real MLP layers to behave, with individual detectors firing on recognizable patterns and
+  writing out predictable contributions. It's also where most of a transformer's parameters live:
+  the MLP's hidden width is typically several times the model width, and across a whole model the
+  MLPs hold roughly two-thirds of the weights. Attention decides where to look; the MLP does most
+  of the remembering.</p>
+  <p>One honest confession, inherited from the original essay. Describing transformers as a
+  "selective second order model with skips" was always a simplification, and here's exactly where
+  it leaks: a learned feature detector is under no obligation to detect a word <em>pair</em>. It
+  can fire on triples, on a word's absence, on soft blends of many things at once. The
+  pairs-and-votes story is a floor on what these layers can express, not a ceiling.</p>
+</section>
+
+<section id="completion">
+  <h2><span class="num">11</span>Sequence completion</h2>
+  <p>A model that predicts the next token becomes a model that <em>writes</em> by the simplest loop
+  imaginable. Feed in a <strong>prompt</strong>. Run a forward pass. Out comes a probability
+  distribution over the vocabulary for the next position. Choose a token from it, append it to the
+  sequence, and repeat until satisfied (or until you hit a stop token, whichever comes first).</p>
+  <p>Choosing "the" token deserves a sentence more than it usually gets. Always taking the single
+  most probable token is called <strong>greedy</strong> decoding, and it's the obvious move, but it
+  tends to produce repetitive, over-safe text. In practice tokens are <em>sampled</em> from the
+  distribution, with a <strong>temperature</strong> knob that sharpens or flattens it, usually
+  after truncating the long tail of implausible tokens (<strong>top-p</strong> and friends). The
+  fact that generation is sampling, not lookup, is why the same prompt can yield different
+  answers.</p>
+  <p>Notice also what the loop implies: to generate token 1,001 we apparently re-process tokens 1
+  through 1,000 from scratch. We don't, in practice — the keys and values computed for old tokens
+  never change, so they're cached and reused. That single observation reshapes the economics of
+  inference, and it gets its own door in section 22.</p>
+</section>
+
+<section id="embeddings">
+  <h2><span class="num">12</span>Embeddings</h2>
+  <p>As described so far, our machinery is catastrophically oversized. With a realistic vocabulary
+  of, say, 100,000 tokens, one-hot vectors are 100,000 elements long, and tables over word
+  <em>pairs</em> need 10 billion rows. Worse, a model built on exact word identity learns nothing
+  transferable: everything it learns about <em>cat</em> tells it nothing about <em>kitten</em>.</p>
+  <p>The fix is the <strong>embedding</strong>. Take the N-dimensional one-hot space, where every
+  word sits alone on its own axis, and project all the words down into a much lower-dimensional
+  space — thousands of dimensions rather than a hundred thousand — arranged so that words which
+  behave similarly land near each other. Projection, happily, is just our lookup trick one more
+  time: multiplying a one-hot vector by an [N × d] <strong>embedding matrix</strong> pulls out that
+  word's row, which now holds its d coordinates rather than a probability row. Every word becomes a
+  dense little bundle of coordinates, and whatever the model learns about one point quietly
+  applies to its neighbors. That's the real prize: <strong>generalization</strong>. Each training
+  example teaches a whole neighborhood.</p>
+  <p>The embedding matrix is learned along with everything else, and the number of dimensions is a
+  dial trading capacity for cost. From here on, everything happens to these dense vectors; the
+  one-hot representation appears only at the very entrance and exit of the model. And note what
+  this does to our search framing: dot-product matching in embedding space is no longer an exact
+  identity test but a <em>semantic</em> one. The probe that matches <em>battery</em> now also
+  half-matches <em>charger</em>. The search got fuzzy, on purpose.</p>
+</section>
+
+<section id="position">
+  <h2><span class="num">13</span>Position: from wiggles to rotations</h2>
+  <p>Here's an awkward fact about everything we've built since introducing attention: it's a
+  <em>bag</em>. The attention sums and the MLP's feature detectors treat the context as an
+  unordered collection — shuffle the earlier words and, absent any other signal, nothing changes.
+  But "the dog bit the man" and "the man bit the dog" deserve different continuations. Position
+  has to be injected somewhere. This chapter was a stub in the original essay, by its author's own
+  admission. The field has since more or less settled the question, so let's do it properly.</p>
+
+  <h3>Absolute positions: add a position vector</h3>
+  <p>The first family of solutions marks each token with <em>where it is</em>. Learn (or design) one
+  vector per position — a vector for "slot 1", a vector for "slot 2" — and add it to the token's
+  embedding on the way in. GPT-2 learned these vectors from data. The original 2017 paper designed
+  them instead, as sinusoids: each pair of embedding dimensions traces a circle as you walk along
+  the sequence, with different pairs cycling at different frequencies, fast ones distinguishing
+  neighbors and slow ones distinguishing distant regions. Like reading a clock: the second hand
+  separates nearby instants, the hour hand separates afternoons. Rohrer described this as a
+  "circular wiggle," which remains the best name for it.</p>
+  <p>Absolute schemes work, but they answer a slightly wrong question. For language, what mostly
+  matters is not "this token is at position 1,847" but "this token is <em>three tokens before</em>
+  that one." Relationships are relative. And baking absolute slot labels into the embeddings means
+  position information sloshes around through every downstream computation, whether relevant or
+  not. That sloshing is measurable, not rhetorical: added-in position and content compete for the
+  same coordinates of the shared vector, and when one small-scale study gave the sinusoids a
+  learned linear layer of their own, training used it to rotate the positional basis nearly out of
+  the content subspace — a ~7× drop in overlap (Lehtinen, 2026), echoing the "untied" positional
+  designs tried in language models. Even the additive scheme wants position and content
+  disentangled; it just lacks the freedom. The next idea grants that wish structurally.</p>
+
+  <h3>Relative position: rotate the search probes — RoPE</h3>
+  <p>The modern default, <strong>Rotary Position Embedding (RoPE)</strong>, is a sharper idea, and
+  it slots directly into our search framing. Don't touch the embeddings, the values, or the
+  residual stream at all. Instead, at the moment of the attention search, <em>rotate the probes</em>.
+  Take each query and key vector, treat its dimensions two at a time as points on a plane, and
+  rotate each pair by an angle proportional to the token's position — again with a spectrum of
+  frequencies across the pairs, fast hands and slow hands.</p>
+  <svg viewBox="0 0 640 180" role="img" aria-label="RoPE rotation diagram" style="width:100%; max-width:640px; margin:1.4rem 0; display:block;">
+    <g stroke="#2e7a4e" stroke-width="1" fill="none">
+      <circle cx="110" cy="90" r="55"/>
+      <circle cx="320" cy="90" r="55"/>
+      <circle cx="530" cy="90" r="55"/>
+    </g>
+    <g stroke="#59e389" stroke-width="2">
+      <line x1="110" y1="90" x2="165" y2="90"/>
+      <line x1="320" y1="90" x2="359" y2="51"/>
+      <line x1="530" y1="90" x2="530" y2="35"/>
+    </g>
+    <g fill="#59e389" font-size="12">
+      <text x="110" y="168" text-anchor="middle">position 0</text>
+      <text x="320" y="168" text-anchor="middle">position 1</text>
+      <text x="530" y="168" text-anchor="middle">position 2</text>
+    </g>
+    <g fill="#6d816f" font-size="11">
+      <text x="110" y="22" text-anchor="middle">same vector,</text>
+      <text x="320" y="22" text-anchor="middle">rotated by mθ as its</text>
+      <text x="530" y="22" text-anchor="middle">position m advances</text>
+    </g>
+  </svg>
+  <p class="figcap">fig 5 · one two-dimensional slice of a query or key under RoPE. the vector's content sets the hand's length and starting angle; its position winds it forward.</p>
+  <p>Why is that clever? Because rotation doesn't change lengths, and the dot product between two
+  vectors depends only on their lengths and the angle <em>between</em> them. Rotate a query forward
+  by its position m and a key forward by its position n, and the rotations partially cancel: the
+  match score depends only on the <em>offset</em> m − n. The search automatically asks "how well
+  does this key match, given how far back it sits?" — relative position, obtained for free, exactly
+  where position matters (the matching) and nowhere it doesn't (the content being retrieved).
+  Attention scores can now learn distance-sensitive behaviors — "match this pattern, but prefer
+  recent instances" — without any position information contaminating the token representations
+  themselves.</p>
+  <p>Honorable mentions in the same spirit: <strong>ALiBi</strong> skips the trigonometry and
+  simply subtracts a distance-proportional penalty from every attention score, a blunt "prefer
+  nearby" prior that extrapolates gracefully; and some recent models use <em>no</em> positional
+  scheme in certain layers at all, since the causal mask alone leaks enough ordering information
+  for the model to reconstruct position. The choice of scheme also turns out to be the crux of
+  extending models to very long contexts — that door is marked in section 22.</p>
+</section>
+
+<section id="unembedding">
+  <h2><span class="num">14</span>Unembedding and softmax</h2>
+  <p>After the model has done its thinking, the final vector at the last position lives in
+  embedding space, and we need a score for every token in the vocabulary. Getting back out is one
+  more projection — an <strong>unembedding matrix</strong>, shaped [d × N], the mirror image of the
+  way in. (Some models literally reuse the embedding matrix, transposed, for this — "tied
+  embeddings" — which is tidy, saves parameters, and makes the symmetry explicit: entering
+  vocabulary space and leaving it are the same lookup, run in opposite directions.)</p>
+  <p>The result is a dense vector of raw scores — <strong>logits</strong> — with high values for
+  plausible tokens, middling values for their neighbors in embedding space, negatives for the
+  implausible. To turn scores into a probability distribution we use <strong>softmax</strong>:
+  exponentiate every score and divide by the sum of the exponentials. Softmax earns its place three
+  times over. It produces genuine probabilities, so candidates can be compared and sampled. It
+  behaves like a "soft argmax" — a clear winner is amplified toward 1, but near-ties are preserved
+  as near-ties rather than crushed, which is what makes non-greedy sampling meaningful. And it is
+  differentiable, so the whole assembly can be trained end to end. This same function, we're about
+  to see, also runs the attention search — it is the transformer's utility infielder.</p>
+</section>
+
+<section id="multihead">
+  <h2><span class="num">15</span>Multi-head attention</h2>
+  <p>Time to face the shapes squarely. A short cast of numbers, with modern values for scale:
+  vocabulary size <em>N</em> (~32k–256k today), sequence length <em>n</em> (thousands to millions),
+  and the model width <em>d<sub>model</sub></em> (512 in the 2017 paper; 4,096 in Llama-2-7B; five
+  figures in frontier models). The token sequence enters as an [n × d<sub>model</sub>] matrix and —
+  this is the quiet organizing principle of the whole architecture — every block reads and writes
+  that same shape, all the way up.</p>
+  <p>Within an attention block, learned matrices W<sub>Q</sub>, W<sub>K</sub>, W<sub>V</sub>
+  project the stream into queries, keys, and values. And here we correct the record on a point the
+  original essay got backwards. It's tempting to say we need multiple heads because softmax focuses
+  attention on a single element. But softmax does no such thing by necessity — it can happily
+  spread weight across many positions (the √d<sub>k</sub> scaling exists partly to keep it from
+  saturating into a hard argmax). The real motivation is different: <strong>one search at a time is
+  the limitation</strong>. A single head applies one learned notion of relevance. But resolving a
+  pronoun, tracking an open quotation mark, and copying a variable name are different searches with
+  different keys, wanted simultaneously.</p>
+  <p>So the block runs <em>h</em> searches in parallel — the <strong>heads</strong> — each with its
+  own W<sub>Q</sub>, W<sub>K</sub>, W<sub>V</sub>, each projecting into its own small subspace of
+  dimension d<sub>k</sub> = d<sub>model</sub>/h (64 in the paper, and, by remarkable inertia,
+  usually still ~64–128 today). Each head zooms in on the slice of embedding space relevant to its
+  own question. Running h small searches costs about the same as one big one — the projections
+  slice the width rather than multiply it — and the h results are concatenated and passed through
+  one final output projection, W<sub>O</sub>, to write back to the stream.</p>
+  <p>One modern wrinkle worth naming: in most current models the heads no longer get private keys
+  and values. Groups of query heads share a single K/V pair — <strong>grouped-query attention
+  (GQA)</strong>, or in the extreme, one K/V pair for all heads (MQA). Quality barely notices;
+  the motivation is the inference-time cache from section 11, whose size scales with the number of
+  K/V heads. Many different questions, asked against a shared index.</p>
+</section>
+
+<section id="single-head">
+  <h2><span class="num">16</span>Single head attention, revisited</h2>
+  <p>Now we can read the full equation with everything it earned:</p>
+  <div class="eq">Attention(Q, K, V) = softmax( QKᵀ / √d<sub>k</sub> + M ) V</div>
+  <p><code>QKᵀ</code> is [n × n]: every position's query scored, by dot product, against every
+  position's key. Row i is position i's search over the entire sequence. Dividing by
+  √d<sub>k</sub> keeps these scores in a civilized range — dot products of high-dimensional random
+  vectors grow with √dimension, and unscaled they'd push softmax into saturated, nearly-gradient-free
+  territory, violating engineering reality #3.</p>
+  <p><strong>M is the causal mask, and here we fix the original essay's mechanics.</strong> For
+  next-token prediction, position i must not consult positions after i — that would be reading the
+  answer key. The mask is not a multiplication by zeros and ones. It's an [n × n] matrix
+  <em>added</em> to the scores: 0 where looking is allowed (the lower triangle), −∞ where it isn't.
+  After softmax, e<sup>−∞</sup> = 0, so forbidden positions get exactly zero weight <em>and the
+  remaining weights renormalize over the allowed ones</em> — which a post-hoc multiplicative mask
+  wouldn't do. Zeroing scores wouldn't even hide anything, since a score of 0 still claims positive
+  probability after softmax. Add negative infinity <em>before</em> the softmax; let e^x do the
+  censoring.</p>
+  <p>The softmaxed rows then weight the value vectors: each position's output is a blend of the
+  values at the positions its search matched. Retrieval, completed. Note also that the whole [n × n]
+  table is computed at once — every position runs its search in the same pair of matmuls, which is
+  precisely the parallelism that made transformers trainable at scale where recurrent models were
+  stuck marching token by token. Attention is quadratic in sequence length, though; that cost, and
+  the ingenious ways of paying it, is another marked door in section 22.</p>
+  <p>Two final honesty notes, both preserved from the original. First: the searches are conducted
+  in learned subspaces, so attention relates <em>kinds</em> of content, not individual words — the
+  semantic fuzziness from section 12 applies to every probe. Second: what attention passes along is
+  position-to-position. It says "blend in what's at position 7," whatever position 7 turned out to
+  contain. The routing and the content are cleanly separated, which is much of why the mechanism is
+  interpretable at all.</p>
+</section>
+
+<section id="residual-stream">
+  <h2><span class="num">17</span>The residual stream: the tower that's almost a field</h2>
+  <p>Here is the piece of plumbing that changes how the whole building looks. Around every
+  attention block and every MLP runs a <strong>residual connection</strong> (skip connection): the
+  block's input is added back to its output. No block ever replaces the signal; every block
+  computes a correction and <em>adds</em> it.</p>
+  <p>The traditional justifications are real and worth keeping. Residual connections keep the
+  gradient landscape smooth — even if a block learns to pass nothing, the identity path guarantees
+  that changes upstream still reach downstream, so training doesn't strand itself on plateaus. And
+  they guarantee the model can never entirely forget its input: attention is a filter, and a filter
+  that's working well blocks most things; the residual path carries the original signal past it,
+  unconditionally.</p>
+  <p>But take the additions seriously and a stronger picture emerges. That [n × d<sub>model</sub>]
+  matrix flowing up the page — the green line running down this one — is a shared communication
+  channel: the <strong>residual stream</strong>. It begins as embeddings plus whatever position
+  scheme touches it, and ends at the unembedding. Every component along the way does exactly one
+  thing: it <em>reads</em> from the stream through its input projections, computes something, and
+  <em>writes</em> its result back by addition. Nothing else. The stream is the only memory, the
+  only bus, the only way any part of the model talks to any other part.</p>
+  <svg viewBox="0 0 640 300" role="img" aria-label="Residual stream diagram" style="width:100%; max-width:640px; margin:1.4rem 0; display:block;">
+    <line x1="80" y1="20" x2="80" y2="280" stroke="#59e389" stroke-width="3"/>
+    <g stroke="#2e7a4e" stroke-width="1.5" fill="none">
+      <path d="M 80 60  h 90"/> <path d="M 250 60  h 90 M 340 60 L 80 88" />
+      <path d="M 80 130 h 90"/> <path d="M 250 130 h 90 M 340 130 L 80 158"/>
+      <path d="M 80 200 h 90"/> <path d="M 250 200 h 90 M 340 200 L 80 228"/>
+    </g>
+    <g fill="#0e1510" stroke="#2e7a4e">
+      <rect x="170" y="42"  width="80" height="36" rx="5"/>
+      <rect x="170" y="112" width="80" height="36" rx="5"/>
+      <rect x="170" y="182" width="80" height="36" rx="5"/>
+    </g>
+    <g fill="#8fdaa6" font-size="12" text-anchor="middle">
+      <text x="210" y="64">head A</text>
+      <text x="210" y="134">MLP 1</text>
+      <text x="210" y="204">head B</text>
+    </g>
+    <g fill="#6d816f" font-size="11">
+      <text x="100" y="40">read ─→</text>
+      <text x="355" y="92">─→ write (+)</text>
+    </g>
+    <g fill="#59e389" font-size="12" text-anchor="middle">
+      <text x="80" y="14">tokens in</text>
+      <text x="80" y="296">logits out</text>
+    </g>
+  </svg>
+  <p class="figcap">fig 6 · the residual stream as a bus. every head and MLP is a device that reads the stream and adds a contribution back.</p>
+  <p>An objection deserves an answer before we go further: if hundreds of components all
+  <em>add</em> their outputs into the same vector, why don't they trample each other into mush?
+  Because the stream is wide, and wide spaces are roomy. A d<sub>model</sub>-dimensional vector has
+  room for d<sub>model</sub> perfectly orthogonal directions — and far more <em>nearly</em>
+  orthogonal ones. A component that writes along its own direction is simply invisible to a reader
+  probing along an orthogonal one: their dot product is zero, which in the terms of section 02
+  means "not what I'm searching for." Addition works as a bus because writes can be steered into
+  subspaces that other readers ignore — this is how h heads' contributions coexist in one write,
+  and how an early head's note survives untouched until a later head comes searching for it.</p>
+  <p>The remarkable part is that nobody has to arrange this — and here we can lean on a
+  measurement. A recent audit of input encoders (Lehtinen, 2026) set up the smallest possible
+  version of the problem: C signal channels, each with its own learned linear projection, all
+  <em>summed</em> into one stream vector per time step. Many writers, one bus, no coordination
+  imposed. Now, high-dimensional geometry hands such writers near-orthogonality for free — random
+  directions in 64 dimensions overlap by only ~0.1 in cosine terms — so finding the trained
+  projections near-orthogonal would by itself prove nothing, and the audit is careful to measure
+  against each run's own random starting point. The result: training <em>actively tightened</em>
+  the projections well beyond the free default, cutting their mutual overlap ~2.6×, in every seed,
+  with no regularizer asking for it. Bolting on an explicit orthogonality penalty made the
+  geometry another 4× cleaner and improved the loss not at all — the constraint that mattered was
+  already being discovered. Two more of this section's claims got caught on camera in the same
+  experiment. The bus allocates bandwidth by importance: channels that actually drive the outcome
+  earned roughly twice the write norm of distractor channels, with no gating mechanism anywhere in
+  the architecture. And the writes <em>persist through depth</em>: linear probes could still read
+  each channel's identity out of the stream after every one of the model's blocks — which the
+  paper attributes, citing the same residual-stream framework as this section, to precisely the
+  mechanics we've assembled: sublayers write by addition, and (pre-)normalization only rescales
+  what they read, so what's written at the bottom stays readable at the top. It's an input stem
+  rather than a stack of heads, so carry the scale of the numbers with care — but the protocol
+  gradient descent invents there is the one this whole section describes:
+  <strong>orthogonal writes, dot-product reads, discovered rather than designed</strong>.</p>
+  <p>One caveat keeps the picture honest. That audit runs in the roomy regime — far fewer writers
+  than dimensions, so everyone can have their own direction. A language model does not: it wants
+  to represent vastly more features than the stream has dimensions, and pressed for capacity,
+  training overpacks the bus — squeezing in more nearly-orthogonal directions than the space
+  strictly holds, tolerating faint crosstalk as rent. That phenomenon, <em>superposition</em>, is
+  much of why single dimensions of the stream mean nothing in isolation, and why reading a model's
+  mind is a research field rather than an afternoon.</p>
+  <p>Squint at that diagram and the "deep stack of layers" starts to dissolve. If every component
+  just reads the shared stream and adds to it, then a 32-layer model is less a tower of
+  transformations than a <em>wide bank of hundreds of heads and MLPs, all wired to one bus,
+  operating nearly side by side</em>. Layer boundaries stop looking architectural and start looking
+  like a scheduling detail — an ordering imposed on a crowd of otherwise parallel workers. Rohrer's
+  conveyor-belt intuition — each station takes what it can use and adds its work back onto the
+  line, no station obligated to catch everything — was reaching for exactly this, and the residual
+  stream is that intuition made precise.</p>
+  <p><strong>Almost.</strong> The ordering is a scheduling detail with one crucial consequence:
+  a component can read what earlier components <em>wrote</em>. That's the loophole through which
+  depth stays meaningful — sequential <strong>composition</strong>. The classic example is the
+  <em>induction</em> pattern, the mechanism behind a transformer's knack for repeating sequences
+  it has seen before. One head, in an early layer, writes onto each token's stream position a note
+  about which token preceded it. A head in a <em>later</em> layer then searches those notes:
+  holding the current token as its query, it matches positions whose note says "I was preceded by
+  that token," and retrieves what came next last time. Neither head can do this alone; the second
+  head's search key only exists because the first head wrote it. Two dot-product lookups, composed
+  through the stream, yield an algorithm — copy what followed last time — that no single lookup
+  can express.</p>
+  <p>So the honest summary is: a transformer is a broad, almost-flat bank of parallel workers
+  sharing one additive channel, with just enough sequencing to let workers build on each other's
+  notes. Most components act in parallel and independently; a few chains of composition carry the
+  clever algorithms. That "almost" is where much of the magic lives, and it's the working picture
+  of the interpretability researchers who take these models apart for a living.</p>
+</section>
+
+<section id="normalization">
+  <h2><span class="num">18</span>Normalization</h2>
+  <p>Neural networks are nonlinear, which makes them expressive but touchy about the scale of
+  their signals — and a stream that only ever gets added to has a natural tendency to grow.
+  <strong>Layer normalization</strong> is the thermostat: rescale a vector so its values have a
+  standard deviation of one (classically also shifting the mean to zero), then let a couple of
+  learned parameters set the preferred scale. Applied at every block, it keeps signals in the
+  range where gradients behave, at every depth.</p>
+  <p>Two updates from the modern world, one small and one that quietly mattered a great deal. The
+  small one: most current models use <strong>RMSNorm</strong>, which skips the mean-subtraction and
+  just divides by the root-mean-square — cheaper, and empirically nothing of value was lost. The
+  big one is <em>placement</em>. The 2017 design normalized <em>after</em> each block, on the
+  residual path itself ("post-norm") — meaning the normalization repeatedly re-scaled the stream,
+  interrupting the clean identity highway. Post-norm transformers were notoriously delicate to
+  train, needing careful learning-rate warmup, and got worse with depth. The fix, standard since
+  GPT-2, is <strong>pre-norm</strong>: normalize each block's <em>input</em>, on the branch, and
+  leave the stream itself untouched from embedding to unembedding. The residual bus of section 17
+  runs clean end to end — each device normalizes what it reads, and writes back to an unmolested
+  channel. Deep pre-norm transformers train stably almost by default, and it's fair to say this
+  unglamorous reordering is one of the changes that made very large models practical. Nobody
+  entirely knows why normalization helps as much as it does; that admission from the original essay
+  has aged perfectly.</p>
+</section>
+
+<section id="layers">
+  <h2><span class="num">19</span>Layers, revisited</h2>
+  <p>We can now say briskly what a modern transformer block is, because every part has been built.
+  One block = attention (read the stream, search the past, write back) followed by an MLP (read the
+  stream, detect features, write back votes), each wrapped in pre-norm and a residual connection.
+  A model is that block repeated L times — 6 in the 2017 paper, 32 in Llama-2-7B, around a hundred
+  in the largest current models — between an embedding at the bottom and an unembedding at the
+  top.</p>
+  <p>Why repeat it? The original essay's answer — redundancy and trainability — survives, in
+  refined form. With randomly initialized weights, a model with only one narrow path to competence
+  will likely never find it; hundreds of near-parallel workers on a shared stream offer countless
+  paths, and gradient descent only has to find <em>some</em> of them. No single head or MLP is
+  load-bearing (models degrade remarkably gracefully when individual components are damaged),
+  which is exactly what the almost-flat picture predicts. And the depth that remains buys
+  composition: enough sequencing for workers to build multi-step algorithms out of each other's
+  notes, as in section 17. Depth in a transformer is less "higher and higher abstraction at every
+  floor" and more "enough rounds of communication for the crowd to coordinate."</p>
+</section>
+
+<section id="decoder-only">
+  <h2><span class="num">20</span>Decoder-only by default</h2>
+  <p>The 2017 transformer was two towers: an <strong>encoder</strong> that read the source sentence
+  with unmasked, look-anywhere attention, and a <strong>decoder</strong> that generated the target
+  sentence with causal attention, consulting the encoder through a third attention variant —
+  <strong>cross-attention</strong>, where the queries come from the decoder but the keys and values
+  come from the encoder's output. Same equation, different guest list: search someone else's
+  sequence instead of your own. It's the right shape for translation, where a fully-visible input
+  is transformed into a generated output, and encoder–decoder models (T5 and kin) still serve
+  well there.</p>
+  <p>But everything we built in this essay is just the decoder tower, standing alone, and that's no
+  simplification — it's the architecture of essentially every headline language model since GPT-2:
+  the GPT family, Llama, Claude, Gemini, Mistral, and the rest. Causal self-attention over one
+  ever-growing sequence turns out to be enough: the "input" is simply the part of the sequence you
+  were given, and the "output" is the part you generate, with no separate tower needed. If you can
+  frame a task as sequence continuation — and it's remarkable how much can be framed that way — the
+  decoder alone does it.</p>
+  <p>Time to correct the record on the surrounding taxonomy, because the original essay garbled it.
+  <strong>BERT is not a decoder</strong> — it's the encoder tower standing alone: bidirectional,
+  unmasked attention, trained to fill in blanks rather than continue text. That makes it a model
+  that <em>reads</em> — producing representations for classification, retrieval, and search — not
+  one that generates. <strong>ELMo isn't a transformer at all</strong>; it was a bidirectional LSTM,
+  a lovely piece of the pre-transformer world that the 2017 paper's title ("attention is all you
+  need — recurrence can go") was aimed squarely against. The family portrait, correctly labeled:
+  encoder-only reads (BERT and its descendants, most embedding models), decoder-only writes (nearly
+  everything you've chatted with), encoder–decoder transforms (translation, and tasks shaped like
+  it).</p>
+</section>
+
+<section id="tokenizing">
+  <h2><span class="num">21</span>Tokenizing and byte pair encoding</h2>
+  <p>One last piece of honesty about the ground floor. We've been saying "words" throughout, and
+  models don't use words. A dictionary of whole words is a losing game — inflections, typos,
+  names, code, other languages, emoji — and individual characters lose too: they carry almost no
+  meaning for the embedding space to organize, and stretch every text into an enormously long
+  sequence for a mechanism whose cost grows quadratically with length.</p>
+  <p>The standing compromise is <strong>byte pair encoding</strong>. Start from raw bytes — not
+  characters, bytes, so that every possible string is representable and no input is ever truly
+  out-of-vocabulary. Scan a large corpus; find the most frequent adjacent pair of units; merge it
+  into a new unit; repeat until the vocabulary reaches a chosen size. Frequent words end up as
+  single tokens, rare words as a few chunks, and gibberish decomposes all the way to bytes.
+  Vocabulary sizes have drifted upward with the models — GPT-2 used ~50k tokens; current models
+  commonly run 100k–256k, largely to tokenize the world's languages and code more evenly.</p>
+  <p>The vocabulary, in other words, is itself learned from data — inferred, not decreed, which is
+  very much in the spirit of everything above it. Tokenization remains the transformer's least
+  glamorous layer and the source of its most charming failure modes: a model that reasons about
+  black holes but stumbles counting the r's in <em>strawberry</em> is a model that has genuinely
+  never seen the letters — only the tokens.</p>
+</section>
+
+<section id="off-ramps">
+  <h2><span class="num">22</span>Doors we didn't open</h2>
+  <p>The core transformer is now fully assembled, and this essay stops at its edges on purpose.
+  Everything below is real, important, and deliberately left as a marked door — each one a
+  candidate for its own future page. None of them changes the machine you just built; they change
+  how fast it runs, how long its memory is, and what happens to it after pretraining.</p>
+
+  <div class="stub">
+    <span class="tag">door 01 · planned page</span>
+    <h3>The KV cache, and the economics of inference</h3>
+    <p>Generation re-reads the whole past for every new token — unless you cache each token's keys
+    and values, which never change. The cache turns generation from quadratic re-work into a fast
+    append, and its memory footprint (which GQA exists to shrink) is the central budget of serving
+    LLMs.</p>
+  </div>
+
+  <div class="stub">
+    <span class="tag">door 02 · planned page</span>
+    <h3>FlashAttention: the same math, faster</h3>
+    <p>Attention's real cost on modern GPUs isn't arithmetic, it's moving the [n × n] score matrix
+    in and out of memory. FlashAttention computes the identical result in tiles that never leave
+    fast on-chip memory — an exact algorithm, not an approximation, and a lesson in how hardware
+    shapes what "efficient" means.</p>
+  </div>
+
+  <div class="stub">
+    <span class="tag">door 03 · planned page</span>
+    <h3>Long context</h3>
+    <p>How does a model trained on 8k tokens read a novel? Mostly by careful manipulation of RoPE's
+    rotation frequencies (position interpolation, YaRN, and kin), plus attention variants — sliding
+    windows, sparse patterns — that soften the quadratic wall. Section 13 is the prerequisite.</p>
+  </div>
+
+  <div class="stub">
+    <span class="tag">door 04 · planned page</span>
+    <h3>Mixture of experts</h3>
+    <p>Since the MLPs hold most of the parameters, replace each one with a panel of expert MLPs and
+    a tiny router that sends each token to a couple of them. Total parameters balloon; compute per
+    token doesn't. Most frontier models are now sparse in this sense.</p>
+  </div>
+
+  <div class="stub">
+    <span class="tag">door 05 · planned page</span>
+    <h3>After pretraining: instruction tuning and RLHF</h3>
+    <p>Everything in this essay produces a next-token predictor. The step from "continues text" to
+    "answers questions and follows instructions" is post-training — supervised fine-tuning on
+    demonstrations, then optimization against learned preferences. Same architecture, different
+    objective, very different behavior.</p>
+  </div>
+
+  <div class="stub">
+    <span class="tag">door 06 · planned page</span>
+    <h3>Beyond text, and beyond attention</h3>
+    <p>Images, audio, and other modalities enter the same stream as sequences of dense vectors —
+    the trick anticipated in the original essay's audio section. Meanwhile state-space models and
+    hybrids ask how much of attention's job recurrence can take back. The residual-stream picture
+    survives all of it.</p>
+  </div>
+</section>
+
+<section id="ledger">
+  <h2><span class="num">23</span>Corrections ledger</h2>
+  <p>In the spirit of the original's honesty, here is exactly what this rebuild changed about
+  matters of fact, as opposed to matters of currency. If you find an error in <em>this</em>
+  version, the ledger has room.</p>
+  <table class="ledger">
+    <tr><th>Original (2021)</th><th>This version</th></tr>
+    <tr>
+      <td>Listed BERT, ELMo, and Copilot as examples of "the decoder half of a transformer."</td>
+      <td>BERT is encoder-only; ELMo is a bidirectional LSTM, not a transformer. Copilot's model
+      was indeed decoder-only. (§20)</td>
+    </tr>
+    <tr>
+      <td>Described the causal mask as element-wise multiplication that "sets attention to
+      negative infinity."</td>
+      <td>The mask is <em>additive</em>: −∞ is added to forbidden scores before softmax, which
+      zeroes them and renormalizes the rest. A multiplicative 0/1 mask can't do either. (§16)</td>
+    </tr>
+    <tr>
+      <td>Motivated multi-head attention by claiming softmax forces attention onto a single
+      element.</td>
+      <td>Softmax can be diffuse (the √d<sub>k</sub> scaling helps keep it so). Heads exist to run
+      multiple different searches in parallel subspaces. (§15)</td>
+    </tr>
+    <tr>
+      <td>Described post-norm placement, per the 2017 paper, without flagging its training
+      instability.</td>
+      <td>Pre-norm (standard since GPT-2) keeps the residual stream clean and is a large part of
+      why deep models train stably. RMSNorm noted. (§18)</td>
+    </tr>
+    <tr>
+      <td>Positional encoding covered sinusoids only, and was flagged by the author as an
+      intuition still under construction.</td>
+      <td>Rewritten around the absolute-vs-relative distinction, with RoPE as the modern default
+      and ALiBi/NoPE noted. (§13)</td>
+    </tr>
+    <tr>
+      <td>Layers framed as a conveyor belt providing redundancy rather than abstraction.</td>
+      <td>Kept, sharpened into the residual-stream view — near-parallel workers on a shared bus —
+      with the explicit caveat that inter-layer composition (e.g. induction) is real and
+      load-bearing. (§17, §19)</td>
+    </tr>
+    <tr>
+      <td>Encoder–decoder architecture presented as the transformer; character-level and audio
+      discussion framed around 2021-era practice.</td>
+      <td>Decoder-only presented as the default it became; byte-level BPE and modern vocabulary
+      sizes; audio/multimodal moved behind door 06. (§20, §21, §22)</td>
+    </tr>
+  </table>
+</section>
+
+<section id="resources">
+  <h2><span class="num">24</span>Resources and credits</h2>
+  <p>First and above all: Brandon Rohrer's
+  <a href="https://brandonrohrer.com/transformers.html">Transformers from Scratch</a> (2021), whose
+  bottom-up arc — one-hot vectors, dot products as search, matrix multiplication as lookup, Markov
+  models, and only then attention — this essay follows deliberately and gratefully. He released
+  his text and figures CC0 and asked only that reuse for education be cheered; consider this a
+  cheer. This rebuild is likewise offered CC0.</p>
+  <p>Primary sources for what's new or corrected here:
+  <a href="https://arxiv.org/abs/1706.03762">Attention Is All You Need</a> (Vaswani et al., 2017) —
+  the original architecture;
+  <a href="https://arxiv.org/abs/2104.09864">RoFormer</a> (Su et al., 2021) — RoPE;
+  <a href="https://arxiv.org/abs/2108.12409">ALiBi</a> (Press et al., 2021);
+  <a href="https://arxiv.org/abs/2002.04745">On Layer Normalization in the Transformer
+  Architecture</a> (Xiong et al., 2020) — pre-norm vs post-norm;
+  <a href="https://arxiv.org/abs/1910.07467">RMSNorm</a> (Zhang &amp; Sennrich, 2019);
+  <a href="https://arxiv.org/abs/2002.05202">GLU Variants Improve Transformer</a> (Shazeer, 2020)
+  — SwiGLU;
+  <a href="https://arxiv.org/abs/2305.13245">GQA</a> (Ainslie et al., 2023);
+  <a href="https://arxiv.org/abs/2012.14913">Transformer Feed-Forward Layers Are Key-Value
+  Memories</a> (Geva et al., 2020);
+  <a href="https://transformer-circuits.pub/2021/framework/index.html">A Mathematical
+  Framework for Transformer Circuits</a> (Elhage et al., 2021) — the residual-stream and
+  induction-head perspective of §17;
+  <a href="https://arxiv.org/abs/2209.10652">Toy Models of Superposition</a> (Elhage et al., 2022)
+  — overpacking the bus;
+  and <a href="https://arxiv.org/abs/2606.04752">An Empirical Audit of Input Encoders for
+  Multi-Channel Signal Transformers</a> (Lehtinen, 2026) — the active-orthogonalization,
+  importance-scaled-norms, and probe-through-depth results in §17, and the positional-rotation
+  measurement in §13.</p>
+  <p>Companions in different styles: Jay Alammar's
+  <a href="https://jalammar.github.io/illustrated-transformer/">Illustrated Transformer</a>
+  (top-down where this is bottom-up), Harvard NLP's
+  <a href="https://nlp.seas.harvard.edu/annotated-transformer/">Annotated Transformer</a> (line-by-line
+  code), Andrej Karpathy's <a href="https://www.youtube.com/watch?v=kCc8FmEb1nY">Let's build GPT</a>
+  (from-scratch implementation), and Brendan Bycroft's
+  <a href="https://bbycroft.net/llm">LLM Visualization</a> (the same machine, walkable in 3D —
+  and, fittingly, also green on black).</p>
+</section>
+
+<footer>
+  <p>rebuilt 2026 · lineage: e2eml.school/transformers.html (CC0) · errors are the reviser's ·
+  the stream runs top to bottom, contributions are additive</p>
+</footer>
+
+</main>
+</body>
+</html>
